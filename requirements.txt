@@ -1,0 +1,17 @@
+# Dependances autorisees par TACHES.txt section 3. Rien d'autre.
+pandas>=2.0
+numpy>=1.24
+scipy>=1.10
+requests>=2.28
+python-dotenv>=1.0
+soccerdata>=1.5
+matplotlib>=3.7
+
+# Tests uniquement
+pytest>=7.0
+
+# web.py (interface web) n'utilise que la bibliotheque standard : http.server.
+# Aucune dependance web, TACHES.txt section 3 n'en autorise pas.
+
+# tkinter fait partie de la bibliotheque standard.
+# Sur Debian/Ubuntu il est fourni par le paquet systeme : sudo apt install python3-tk

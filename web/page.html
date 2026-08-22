@@ -1,0 +1,1995 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAB3OUNSTAT — les matchs a venir</title>
+<style>
+  :root {
+    --fond: #f7f7f5; --carte: #ffffff; --encre: #1a1a18; --doux: #6b6b64;
+    --trait: #e0e0da; --retenue: #d3f9d8; --alerte: #ffd8a8;
+    --accent: #1b5e20; --creux: #f0f0ec;
+    /* Jauge : le remplissage porte l'etat, la piste est un pas clair de la
+       MEME rampe, pour que l'etat se lise sur toute la barre et pas
+       seulement sur la partie remplie. */
+    --jauge-plein: #1b5e20; --jauge-piste: #d3f9d8;
+    --jauge-court: #b45309; --jauge-court-piste: #fde68a;
+    --juste: #d3f9d8; --juste-encre: #1b5e20;
+    --rate: #ffd6d6; --rate-encre: #a11212;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fond: #16171a; --carte: #1e2024; --encre: #e8e8e4; --doux: #9a9a92;
+      --trait: #2e3136; --retenue: #1e4620; --alerte: #5c3d10;
+      --accent: #86c98b; --creux: #24262b;
+      --jauge-plein: #86c98b; --jauge-piste: #1e4620;
+      --jauge-court: #fbbf24; --jauge-court-piste: #4a3410;
+      --juste: #1e4620; --juste-encre: #86c98b;
+      --rate: #4a1c1c; --rate-encre: #f4a3a3;
+    }
+  }
+  * { box-sizing: border-box; }
+
+  /* --- Barre de navigation ------------------------------------------------
+     Collante : les onglets et le nom de la vue courante restent atteignables
+     quel que soit le defilement, sur une page qui fait plusieurs ecrans. */
+  /* `.barre` est deja la barre de probabilites 1N2 des cartes de match
+     (plus bas) : un nom distinct, sinon la navigation herite de ses
+     22 pixels de haut et de son display:flex. */
+  .nav-site {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--fond) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--trait);
+    transition: box-shadow .2s ease;
+  }
+  .nav-site.detachee { box-shadow: 0 2px 14px rgba(0,0,0,.10); }
+  .nav-centre {
+    max-width: 1100px; margin: 0 auto; padding: 9px 20px;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  }
+  .onglets { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+  .onglet {
+    background: none; border: 1px solid transparent; border-radius: 7px;
+    padding: 6px 11px; color: var(--doux); font-size: 14px; font-weight: 550;
+    display: inline-flex; align-items: center; gap: 7px;
+    transition: color .15s ease, background .15s ease;
+  }
+  .onglet:hover:not(:disabled) { color: var(--encre); background: var(--creux); }
+  .onglet[aria-selected="true"] {
+    color: var(--encre); background: var(--carte); border-color: var(--trait);
+  }
+  .onglet:disabled { opacity: .45; cursor: default; }
+  .onglet[aria-selected="true"] .pastille { background: var(--accent); color: var(--fond); }
+  .pastille {
+    min-width: 20px; padding: 0 6px; border-radius: 10px; font-size: 11px;
+    font-weight: 700; background: var(--creux); color: var(--doux);
+    font-variant-numeric: tabular-nums;
+  }
+  .pastille:empty { display: none; }
+
+  /* --- Vues ---------------------------------------------------------------
+     Une seule visible a la fois. Le repli « rien a montrer » est porte par le
+     CSS a partir de l'attribut `hidden` que le code posait deja : la logique
+     d'affichage des donnees n'a pas eu a changer. */
+  .vue { display: none; animation: entre .28s ease-out; }
+  .vue.active { display: block; }
+  .vue > section[data-principale][hidden] ~ .vue-vide { display: block; }
+  .vue-vide { display: none; color: var(--doux); padding: 26px 2px; }
+  @keyframes entre {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+  }
+  body {
+    margin: 0; background: var(--fond); color: var(--encre);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .contenu { max-width: 1100px; margin: 0 auto; padding: 20px 20px 60px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+  .marque { display: flex; align-items: center; gap: 9px; }
+  .marque svg { width: 22px; height: 22px; flex: none; color: var(--accent); }
+  .marque .mot { letter-spacing: .16em; font-weight: 700; }
+  h2 { font-size: 15px; margin: 32px 0 12px; font-weight: 650; }
+  h2 .compte { color: var(--doux); font-weight: 400; }
+
+  header { padding: 16px 0; border-bottom: 1px solid var(--trait); }
+  header .controles {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px;
+  }
+  header .controles .espace { margin-left: auto; }
+  header .sous { color: var(--doux); font-size: 13px; margin-top: 2px; }
+  select, input, button {
+    font: inherit; color: inherit; background: var(--carte);
+    border: 1px solid var(--trait); border-radius: 6px; padding: 6px 10px;
+  }
+  input[type=number] { width: 100px; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--doux); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.principal { background: var(--encre); color: var(--fond); border-color: var(--encre); }
+  label { color: var(--doux); font-size: 13px; }
+
+  .bandeau {
+    margin: 16px 0; padding: 12px 14px; border: 1px solid var(--trait);
+    border-left: 3px solid var(--doux); border-radius: 6px; background: var(--carte);
+  }
+  .bandeau .chiffres { font-weight: 600; margin-bottom: 4px; }
+  .bandeau p { margin: 0; color: var(--doux); font-size: 13px; }
+
+  .etat { padding: 14px 0; color: var(--doux); }
+  .erreur {
+    padding: 12px 14px; border-radius: 6px; background: var(--alerte);
+    color: var(--encre); white-space: pre-wrap; margin: 12px 0;
+  }
+
+  .jour { color: var(--doux); font-size: 13px; margin: 20px 0 8px; font-weight: 600; }
+  .match {
+    background: var(--carte); border: 1px solid var(--trait); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 8px;
+    display: grid; grid-template-columns: 62px 1fr 300px; gap: 14px; align-items: center;
+  }
+  /* Le cadre entier porte le verdict de la double chance (1X, 12, X2) : c'est
+     le pari le plus couvert de la carte, donc celui qui se lit de loin. */
+  .match.cadre-juste { border-color: var(--juste-encre); box-shadow: 0 0 0 1px var(--juste-encre); }
+  .match.cadre-rate { border-color: var(--rate-encre); box-shadow: 0 0 0 1px var(--rate-encre); }
+  .heure { color: var(--doux); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .equipes { font-weight: 600; }
+  .books { color: var(--doux); font-size: 12px; font-weight: 400; }
+  .barre { display: flex; height: 22px; border-radius: 4px; overflow: hidden; font-size: 11px; }
+  .barre span {
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-variant-numeric: tabular-nums; min-width: 0; overflow: hidden;
+  }
+  .b1 { background: #2f6f4f; } .bn { background: #8a8a80; } .b2 { background: #3a5f8a; }
+  .secondaire {
+    color: var(--doux); font-size: 12px; margin-top: 5px;
+    display: flex; gap: 14px; font-variant-numeric: tabular-nums;
+  }
+  .declencheur {
+    cursor: pointer; background: none; border: none; padding: 0;
+    color: var(--doux); font-size: 12px; text-decoration: underline dotted;
+    text-underline-offset: 3px;
+  }
+  .declencheur:hover { color: var(--encre); }
+  .prono {
+    grid-column: 1 / -1; margin-top: 9px; padding-top: 9px;
+    border-top: 1px dashed var(--trait);
+    display: flex; flex-wrap: wrap; gap: 5px 14px; align-items: baseline;
+    font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  .prono .etiquette {
+    color: var(--doux); font-size: 11px; letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .prono .titre { font-weight: 650; font-size: 13px; }
+  .prono .stat { color: var(--doux); }
+  .prono .stat b { color: var(--encre); font-weight: 600; }
+  .prono .couvert { flex-basis: 100%; color: var(--doux); }
+  /* Les comptes annexes restent visuellement secondaires : ils n'ont pas de
+     contre-expertise du marche, ils ne doivent pas avoir l'air aussi solides
+     que le 1N2. */
+  .prono.annexe { margin-top: 5px; padding-top: 5px; border-top: none; }
+  .prono.annexe .titre { font-weight: 600; font-size: 12px; }
+  .prono.absences .titre { font-weight: 600; font-size: 12px; }
+  /* Le liseré double la pastille : le verdict reste lisible d'un coup d'oeil
+     quand la carte est parcourue en diagonale. */
+  .prono.est-juste { border-left: 3px solid var(--juste-encre); padding-left: 9px; }
+  .prono.est-rate { border-left: 3px solid var(--rate-encre); padding-left: 9px; }
+  .absent { color: var(--doux); }
+  .absent.susp { color: var(--encre); font-weight: 600; }
+  .drapeau {
+    display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+    background: var(--alerte); color: var(--encre); cursor: help;
+  }
+  .puce {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 24px; padding: 1px 7px; border-radius: 4px;
+    color: #fff; font-weight: 650; font-size: 11px;
+  }
+  .puce.p1 { background: #2f6f4f; } .puce.pn { background: #8a8a80; }
+  .puce.p2 { background: #3a5f8a; } .puce.pdc { background: #6b6b64; }
+  .detail { grid-column: 1 / -1; margin-top: 4px; }
+  .detail table { font-size: 12px; }
+  .detail th, .detail td { padding: 5px 7px; }
+  .detail td.meilleure { font-weight: 650; color: var(--accent); }
+  .detail .note { margin: 8px 2px 0; font-size: 12px; }
+  .detail h3 {
+    font-size: 13px; font-weight: 650; margin: 14px 2px 6px; color: var(--doux);
+  }
+  .detail h3:first-child { margin-top: 2px; }
+  .niveau {
+    display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+    font-weight: 600; background: var(--creux); color: var(--doux);
+  }
+  .niveau.n-tres { background: var(--retenue); color: var(--encre); }
+  .niveau.n-reserve { background: var(--alerte); color: var(--encre); }
+  .cartouche {
+    border: 1px solid var(--trait); border-left: 3px solid var(--accent);
+    border-radius: 6px; padding: 10px 12px; margin: 2px 0 4px;
+  }
+  .cartouche.rien { border-left-color: var(--doux); }
+  .cartouche ul { margin: 6px 0 0; padding-left: 18px; }
+  .cartouche li { margin: 3px 0; font-size: 13px; }
+  .cartouche .cout { color: var(--doux); font-size: 12px; }
+  .chiffresLigne {
+    display: flex; flex-wrap: wrap; gap: 18px; font-size: 12px;
+    font-variant-numeric: tabular-nums; margin: 2px;
+  }
+  .chiffresLigne b { font-weight: 650; }
+  td.reserve { color: var(--encre); white-space: normal; min-width: 200px;
+               font-size: 11px; line-height: 1.35; }
+
+  .tableau { overflow-x: auto; border: 1px solid var(--trait); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; background: var(--carte); font-size: 13px; }
+  th, td { padding: 8px 7px; text-align: right; white-space: nowrap; }
+  th {
+    background: var(--creux); font-weight: 600; color: var(--doux); font-size: 12px;
+    position: sticky; top: 0; text-align: right;
+  }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  tbody tr { border-top: 1px solid var(--trait); }
+  tbody tr.retenue { background: var(--retenue); }
+  tbody tr.alerte { background: var(--alerte); }
+  td.nombre { font-variant-numeric: tabular-nums; }
+  td.motif {
+    color: var(--doux); font-size: 12px;
+    white-space: normal; min-width: 175px; line-height: 1.35;
+  }
+
+  .vide { color: var(--doux); padding: 16px 0; }
+  .jauge {
+    display: inline-block; width: 90px; height: 6px; border-radius: 3px;
+    background: var(--creux); overflow: hidden; vertical-align: middle;
+    margin-right: 8px;
+  }
+  .jauge span { display: block; height: 100%; background: var(--accent); }
+  .jauge.tendue span { background: #c0782c; }
+  .inutilisee { color: var(--doux); }
+
+  .panneau {
+    background: var(--carte); border: 1px solid var(--trait); border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .chiffresCle {
+    display: flex; flex-wrap: wrap; gap: 22px; margin-bottom: 10px;
+  }
+  .chiffresCle div { min-width: 120px; }
+  .chiffresCle .valeur {
+    font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums;
+  }
+  .chiffresCle .clef { color: var(--doux); font-size: 12px; }
+  .verdict {
+    padding: 10px 12px; border-radius: 6px; margin: 10px 0; font-size: 13px;
+  }
+  .verdict.bon { background: var(--retenue); }
+  .verdict.mauvais { background: var(--alerte); }
+  .note { color: var(--doux); font-size: 13px; margin: 6px 0; }
+
+  /* --- Verdicts : le prono confronte au resultat ---------------------------
+     La couleur ne porte jamais seule : chaque verdict a son signe et son mot,
+     pour qui ne distingue pas le rouge du vert et pour l'impression noir et
+     blanc. Meme regle que les etats du reste de la page. */
+  .verdict-puce {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 700;
+    margin-right: 6px; white-space: nowrap;
+  }
+  .verdict-puce.juste { background: var(--juste); color: var(--juste-encre); }
+  .verdict-puce.rate { background: var(--rate); color: var(--rate-encre); }
+  .verdict-puce.inconnu { background: var(--creux); color: var(--doux); }
+  .score {
+    display: inline-flex; align-items: center; gap: 8px; margin-left: 8px;
+    padding: 1px 8px; border-radius: 5px; background: var(--creux);
+    font-variant-numeric: tabular-nums; font-weight: 700;
+  }
+  .score .attente { font-weight: 500; color: var(--doux); font-size: 12px; }
+  .bilan-verdict { color: var(--doux); font-size: 12px; margin-left: 6px; }
+
+  /* --- Reglages du combine ------------------------------------------------
+     La mise et l'objectif se reglent dans la vue qui les utilise, pas dans
+     l'en-tete : on veut voir la jauge bouger en meme temps qu'on les change. */
+  .reglages {
+    display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap;
+    background: var(--carte); border: 1px solid var(--trait);
+    border-radius: 10px; padding: 13px 16px; margin: 4px 0 14px;
+  }
+  .reglage { display: flex; flex-direction: column; gap: 5px; }
+  .reglage.grandit { flex: 1; min-width: 240px; }
+  .reglage-valeur {
+    color: var(--encre); font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .reglage-gain {
+    font-size: 22px; font-weight: 700; line-height: 1.1;
+    transition: color .25s ease;
+  }
+  .reglage-gain.change { color: var(--accent); }
+  .champ-euro { position: relative; }
+  .champ-euro input { width: 108px; padding-right: 34px; }
+  .champ-euro::after {
+    content: "EUR"; position: absolute; right: 10px; top: 50%;
+    transform: translateY(-50%); color: var(--doux); font-size: 12px;
+    pointer-events: none;
+  }
+
+  .curseur {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 6px;
+    padding: 0; border: none; border-radius: 3px; background: var(--creux);
+    cursor: pointer;
+  }
+  .curseur::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--accent); border: 3px solid var(--carte);
+    box-shadow: 0 0 0 1px var(--trait);
+    transition: transform .12s ease;
+  }
+  .curseur::-webkit-slider-thumb:hover { transform: scale(1.18); }
+  .curseur::-moz-range-thumb {
+    width: 20px; height: 20px; border-radius: 50%; background: var(--accent);
+    border: 3px solid var(--carte); box-shadow: 0 0 0 1px var(--trait);
+  }
+  .curseur-bornes {
+    position: relative; display: flex; justify-content: space-between;
+    font-size: 11px; color: var(--doux); font-variant-numeric: tabular-nums;
+  }
+  /* Place a sa vraie valeur sur l'echelle, pas centre : un repere qui n'est pas
+     en face de ce qu'il designe induit en erreur plus qu'il n'informe. */
+  .curseur-bornes .repere-max {
+    position: absolute; top: 0; transform: translateX(-50%);
+    color: var(--jauge-court); font-weight: 650; white-space: nowrap;
+  }
+  .curseur-bornes .borne { transition: opacity .2s ease; }
+  .curseur-bornes .borne.effacee { opacity: 0; }
+  .curseur-bornes .repere-max::before {
+    content: ""; position: absolute; left: 50%; top: -9px; width: 2px; height: 6px;
+    background: var(--jauge-court); border-radius: 1px;
+  }
+
+  /* --- Combine du jour ---------------------------------------------------
+     Une jauge, des tuiles, des cartes. Le chiffre de tete est le seul de la
+     section a depasser 48px : c'est lui qu'on lit en premier. */
+  .combine-hero {
+    background: var(--carte); border: 1px solid var(--trait);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 14px;
+  }
+  .combine-hero .ligne {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  .combine-hero .trajet { font-size: 15px; color: var(--doux); }
+  .combine-hero .trajet strong { color: var(--encre); font-size: 17px; }
+  /* Chiffre de tete : chiffres proportionnels, jamais tabulaires — a cette
+     taille, tabular-nums donne a chaque chiffre la largeur d'un 0 et le nombre
+     parait desserre. Le tabulaire est reserve aux colonnes. */
+  .combine-hero .cote {
+    font-size: 48px; line-height: 1.05; font-weight: 700;
+    letter-spacing: -.02em; margin-left: auto;
+  }
+  .combine-hero .cote small { font-size: 20px; font-weight: 600; color: var(--doux); }
+
+  /* `.jauge` est deja pris par les barres de quota des API (ligne ~177) :
+     un nom distinct, sinon leur `display:inline-block; width:90px` s'applique
+     aussi a celle-ci et la reduit a 90 pixels. */
+  .jauge-combine {
+    display: block; width: 100%;
+    margin-top: 12px; height: 14px; border-radius: 7px; overflow: hidden;
+    background: var(--jauge-piste);
+    /* La piste ne se detache pas du fond de carte en clair (1.15:1 mesure) :
+       sans ce liseré, on ne verrait pas jusqu'ou elle va, donc pas le rapport. */
+    border: 1px solid var(--trait);
+  }
+  .jauge-combine > i {
+    display: block; height: 100%; background: var(--jauge-plein);
+    border-radius: 6px; width: 0;
+    transition: width .9s cubic-bezier(.22,.61,.36,1);
+  }
+  .jauge-combine.court { background: var(--jauge-court-piste); }
+  .jauge-combine.court > i { background: var(--jauge-court); }
+  /* Le maximum atteignable, marque sur la jauge elle-meme : c'est ce qui rend
+     visible POURQUOI l'objectif ne passe pas, au lieu de le dire en toutes
+     lettres plus bas. */
+  .jauge-combine { position: relative; }
+  .marqueur-max {
+    position: absolute; top: -3px; bottom: -3px; width: 2px;
+    background: var(--encre); opacity: .5; border-radius: 1px;
+    transition: left .9s cubic-bezier(.22,.61,.36,1);
+  }
+  .jauge-legende {
+    display: flex; justify-content: space-between; margin-top: 5px;
+    font-size: 12px; color: var(--doux);
+  }
+
+  .tuiles {
+    display: grid; gap: 10px; margin-bottom: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .tuile {
+    background: var(--carte); border: 1px solid var(--trait);
+    border-radius: 8px; padding: 10px 12px;
+    transition: transform .14s ease, border-color .14s ease;
+  }
+  .tuile .valeur { font-size: 24px; font-weight: 650; line-height: 1.1; }
+  .tuile .clef { color: var(--doux); font-size: 12px; margin-top: 2px; }
+  .tuile:hover { transform: translateY(-2px); border-color: var(--doux); }
+
+  .jambes-grille {
+    display: grid; gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  }
+  .jambe-carte {
+    background: var(--carte); border: 1px solid var(--trait);
+    border-left: 3px solid var(--accent); border-radius: 8px; padding: 9px 11px;
+    animation: apparait .34s ease-out backwards;
+    animation-delay: calc(var(--i) * 55ms);
+  }
+  .jambe-carte .duo { font-size: 12px; color: var(--doux); }
+  .jambe-carte .choix { font-weight: 650; margin: 2px 0; }
+  .jambe-carte .bas {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 12px; color: var(--doux);
+  }
+  .jambe-carte .prix { font-size: 15px; font-weight: 650; color: var(--encre); }
+  .jambe-carte {
+    transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease;
+  }
+  .jambe-carte:hover {
+    transform: translateY(-2px); border-left-color: var(--jauge-plein);
+    box-shadow: 0 4px 14px rgba(0,0,0,.08);
+  }
+  /* Squelette : pendant un recalcul, la forme du resultat reste a l'ecran.
+     Un « Calcul... » qui vide le panneau fait sauter la page a chaque cran du
+     curseur, et on perd de vue ce qu'on etait en train de comparer. */
+  .squelette { animation: respire 1.1s ease-in-out infinite; }
+  @keyframes respire { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+  @keyframes apparait {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+  }
+  /* Le mouvement est un agrement, jamais le porteur d'une information : quand
+     il est refuse, tout doit rester lisible et complet, immediatement. */
+  @media (prefers-reduced-motion: reduce) {
+    .jambe-carte { animation: none; }
+    .jauge-combine > i { transition: none; }
+    .vue { animation: none; }
+    .nav-site { transition: none; }
+    .squelette { animation: none; }
+    .jambe-carte:hover, .tuile:hover { transform: none; }
+    .marqueur-max { transition: none; }
+  }
+  .jambes { margin: 10px 0 0; padding-left: 18px; font-size: 13px; }
+  .jambes li { margin: 3px 0; }
+  #table-opportunites td.case,
+  #table-opportunites th:first-child { width: 24px; text-align: center; padding: 0 2px; }
+  .ligue {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    background: var(--creux); color: var(--doux); font-size: 11px;
+    font-weight: 600; margin-right: 6px;
+  }
+  .progression { color: var(--doux); font-size: 13px; margin: 8px 0; }
+  .fragile {
+    color: var(--encre); background: var(--alerte); border-radius: 4px;
+    padding: 4px 8px; margin-top: 6px; font-size: 12px; display: inline-block;
+  }
+  .inter {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    background: var(--alerte); color: var(--encre); font-size: 11px;
+    font-weight: 600; margin-right: 6px;
+  }
+  .avertissement {
+    background: var(--alerte); border-radius: 6px; padding: 10px 12px;
+    margin-top: 10px; font-size: 13px;
+  }
+  /* Le bilan mesure de la regle. Volontairement au-dessus des chiffres
+     flatteurs, et non en note de bas de page. */
+  .bilan {
+    border-radius: 6px; padding: 11px 13px; margin: 0 0 12px; font-size: 13px;
+    border-left: 3px solid var(--doux); background: var(--creux);
+  }
+  .bilan.perdante { background: var(--alerte); border-left-color: #b04a1a; }
+  .bilan .chiffre { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .bilan .comparaison { color: var(--doux); font-size: 12px; margin-top: 5px; }
+  footer {
+    margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--trait);
+    color: var(--doux); font-size: 12px;
+  }
+  footer p { margin: 4px 0; }
+</style>
+</head>
+<body>
+<nav class="nav-site">
+  <div class="nav-centre">
+    <h1 class="marque">
+      <svg viewBox="0 0 24 24" role="img" aria-label="RAB3OUNSTAT">
+        <path d="M2 20 L11 4 L11 20 Z" fill="currentColor"/>
+        <path d="M13 4 L22 4 L13 20 Z" fill="currentColor" opacity=".55"/>
+      </svg>
+      <span class="mot">RAB3OUNSTAT</span>
+    </h1>
+    <div class="onglets" role="tablist">
+      <button class="onglet" role="tab" data-vue="matchs" aria-selected="true">
+        Matchs <span class="pastille" id="n-matchs"></span></button>
+      <button class="onglet" role="tab" data-vue="opportunites" aria-selected="false">
+        Opportunites <span class="pastille" id="n-opportunites"></span></button>
+      <button class="onglet" role="tab" data-vue="combine-jour" aria-selected="false">
+        Combine du jour <span class="pastille" id="n-combine"></span></button>
+      <button class="onglet" role="tab" data-vue="apis" aria-selected="false">
+        Cles API</button>
+    </div>
+  </div>
+</nav>
+
+<div class="contenu">
+
+  <header>
+    <div class="sous" id="sous">Estimations du modele sur les matchs a venir.</div>
+    <div class="controles">
+      <label for="championnat">Championnat</label>
+      <select id="championnat"></select>
+      <label for="jour">Jour</label>
+      <select id="jour"><option value="">Tous les jours</option></select>
+      <label for="bankroll">Bankroll</label>
+      <input type="number" id="bankroll" value="1000" min="1" step="10">
+      <button id="charger" class="principal">Afficher</button>
+      <button id="combine-jour" class="espace"
+              title="Empile des favoris jusqu'a atteindre l'objectif — aucun credit API consomme">
+        Combine du jour</button>
+      <button id="rafraichir"
+              title="Consomme 2 credits The Odds API">Rafraichir les cotes</button>
+    </div>
+  </header>
+
+  <!-- Ce bandeau n'a volontairement aucun bouton de fermeture ni de repli. -->
+  <div class="bandeau">
+    <div class="chiffres" id="chiffres">—</div>
+    <p id="rappel"></p>
+  </div>
+
+  <div id="erreur" class="erreur" hidden></div>
+  <div id="etat" class="etat">Choisis un championnat, puis Afficher.</div>
+
+  <div class="vue active" data-vue="matchs">
+  <section id="section-matchs" data-principale hidden>
+    <h2><span id="titre-matchs">Matchs a venir</span> <span class="compte" id="compte-matchs"></span></h2>
+    <div id="matchs"></div>
+    <div id="rapport-ligues" class="progression" hidden></div>
+    <div id="ecartes" class="vide" hidden></div>
+  </section>
+    <p class="vue-vide">Choisis un championnat, puis <strong>Afficher</strong>.</p>
+  </div>
+
+  <div class="vue" data-vue="opportunites">
+  <section id="section-opportunites" data-principale hidden>
+    <h2>Ou le marche semble decale <span class="compte" id="compte-opportunites"></span></h2>
+    <!-- Sans cette phrase, une ligne « Espanyol 1 @ 8.40 retenue » se lit comme un
+         pronostic de victoire d'Espanyol, alors que le modele lui donne 19.8 % et
+         annonce le Real Madrid gagnant deux blocs plus haut. -->
+    <p class="note" style="margin: -6px 2px 10px;">
+      Ce tableau ne dit pas qui gagne — la ligne <strong>PRONO 1N2</strong> de chaque
+      match s'en charge. Il dit ou la cote parait trop genereuse par rapport au modele.
+      Une selection retenue ici est le plus souvent <strong>peu probable</strong> : elle
+      est retenue pour son prix, pas pour ses chances. Et comme les trois issues d'un
+      match font 100 %, un ecart positif sur l'outsider est l'exact miroir d'un ecart
+      negatif sur le favori : c'est la meme erreur du modele, lue a l'envers.
+    </p>
+    <div id="coupon" class="panneau" hidden></div>
+    <div class="tableau">
+      <table id="table-opportunites">
+        <thead><tr>
+          <th title="cocher pour construire un combine"></th>
+          <th>Match</th><th>Marche</th><th>Sel.</th><th>p modele</th><th>p marche</th>
+          <th>Ecart</th><th>Cote</th><th>Bookmaker</th><th>Esperance</th><th>Mise</th><th>Statut</th>
+        </tr></thead>
+        <tbody id="corps-opportunites"></tbody>
+      </table>
+    </div>
+  </section>
+    <section id="section-combine" hidden>
+      <h2>Combine <span class="compte" id="compte-combine"></span></h2>
+      <div id="combine" class="panneau"></div>
+    </section>
+    <p class="vue-vide">Aucune ligne ou le marche paraisse decale. C'est le cas le
+      plus frequent : la methode n'a pas vocation a trouver un pari chaque jour.</p>
+  </div>
+
+  <div class="vue" data-vue="combine-jour">
+  <div class="reglages">
+    <div class="reglage">
+      <label for="mise">Mise</label>
+      <div class="champ-euro"><input type="number" id="mise" value="10" min="1" step="5"></div>
+    </div>
+    <div class="reglage grandit">
+      <label for="cible">Objectif <span class="reglage-valeur" id="cible-libelle">x9</span></label>
+      <input type="range" id="cible" class="curseur" min="0" max="100" value="43">
+      <div class="curseur-bornes"><span class="borne" id="borne-bas">x1.5</span><span class="borne" id="borne-haut">x100</span><span class="repere-max" id="cible-max" hidden></span></div>
+    </div>
+    <div class="reglage">
+      <!-- « vise » et non « si tout passe » : quand l'objectif depasse ce que
+           la journee permet, le combine reellement propose rapporte moins. Le
+           chiffre obtenu est celui du panneau, pas celui-ci. -->
+      <label>Gain vise</label>
+      <div class="reglage-gain" id="gain-projete">90 EUR</div>
+    </div>
+  </div>
+  <section id="section-combine-jour" data-principale hidden>
+    <h2>Combine du jour <span class="compte" id="compte-combine-jour"></span></h2>
+    <div id="combine-jour-panneau" class="panneau"></div>
+  </section>
+    <p class="vue-vide">Clique sur <strong>Combine du jour</strong> pour empiler les
+      favoris de la journee choisie jusqu'a l'objectif de gain.</p>
+  </div>
+
+  <div class="vue" data-vue="apis">
+  <section id="section-apis">
+    <h2>Cles API</h2>
+    <div class="tableau">
+      <table>
+        <thead><tr>
+          <th>Service</th><th>Cle</th><th>Quota gratuit</th>
+          <th>Consomme</th><th>Restant</th><th>Etat</th>
+        </tr></thead>
+        <tbody id="corps-apis"></tbody>
+      </table>
+    </div>
+  </section>
+  </div>
+
+  <footer>
+    <p id="quota"></p>
+    <p id="avertissement"></p>
+    <p id="genere"></p>
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const pourcent = (x) => (x * 100).toFixed(1) + " %";
+const signe = (x) => (x >= 0 ? "+" : "") + (x * 100).toFixed(1) + " %";
+
+const JOURS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+const MOIS = ["janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet",
+              "aout", "septembre", "octobre", "novembre", "decembre"];
+
+function ageLisible(minutes) {
+  if (minutes < 90) return Math.round(minutes) + " min";
+  const heures = minutes / 60;
+  if (heures < 36) return heures.toFixed(1).replace(".0", "") + " h";
+  return Math.round(heures / 24) + " j";
+}
+
+function libelleJour(date) {
+  const auj = new Date(); auj.setHours(0, 0, 0, 0);
+  const jour = new Date(date); jour.setHours(0, 0, 0, 0);
+  const ecart = Math.round((jour - auj) / 86400000);
+  if (ecart === 0) return "Aujourd'hui";
+  if (ecart === 1) return "Demain";
+  return JOURS[jour.getDay()] + " " + jour.getDate() + " " + MOIS[jour.getMonth()];
+}
+
+// Une case du tableau des bookmakers. La meilleure cote de la colonne est mise
+// en avant : c'est la seule chose qui change vraiment le rendement d'un pari.
+function caseCote(valeur, meilleure) {
+  if (!valeur) return `<td class="nombre">—</td>`;
+  const best = meilleure && Math.abs(valeur - meilleure) < 1e-9;
+  return `<td class="nombre${best ? " meilleure" : ""}"${
+    best ? ' title="meilleure cote du marche"' : ""}>${valeur.toFixed(2)}</td>`;
+}
+
+function tableauBookmakers(m) {
+  // Champ absent : le serveur tourne dans une version anterieure a ce tableau.
+  // Le dire, plutot que de laisser croire que les cotes manquent.
+  if (m.detail_bookmakers === undefined) {
+    return `<div class="vide">Ce serveur ne renvoie pas encore le detail des
+      bookmakers : il a ete demarre avant cette version. Relance-le
+      (Ctrl+C puis <code>python web.py</code>) — aucun credit API n'est consomme.</div>`;
+  }
+  const lignes = m.detail_bookmakers;
+  const best = m.meilleures_cotes || {};
+  if (!lignes.length) {
+    return `<div class="vide">Ces ${m.bookmakers} bookmakers cotent le match, mais
+      aucune de leurs cotes n'est lisible dans le cache. Rafraichis les cotes.</div>`;
+  }
+  return `
+    <div class="tableau">
+      <table>
+        <thead><tr>
+          <th>Bookmaker</th><th>1</th><th>N</th><th>2</th>
+          <th>+2.5</th><th>-2.5</th><th>Marge</th>
+        </tr></thead>
+        <tbody>${lignes.map((b) => `<tr>
+          <td>${b.bookmaker}</td>
+          ${caseCote(b["1"], best["1"])}
+          ${caseCote(b.N, best.N)}
+          ${caseCote(b["2"], best["2"])}
+          ${caseCote(b.plus, best.plus)}
+          ${caseCote(b.moins, best.moins)}
+          <td class="nombre">${b.marge === null || b.marge === undefined
+            ? "—" : (b.marge * 100).toFixed(1) + " %"}</td>
+        </tr>`).join("")}</tbody>
+      </table>
+    </div>
+    <div class="note">
+      Tries par marge croissante : en haut, les livres qui prennent le moins.
+      En vert, la meilleure cote offerte sur chaque selection. Une cote isolee
+      bien au-dessus des autres est plus souvent une erreur de saisie ou une
+      limite de mise tres basse qu'une occasion.
+    </div>`;
+}
+
+const PUCE_1N2 = { "1": "p1", "N": "pn", "2": "p2" };
+
+// Quel bookmaker offre la meilleure cote sur cette selection.
+function bookmakerDe(m, selection) {
+  const best = (m.meilleures_cotes || {})[selection];
+  if (!best) return null;
+  const trouve = (m.detail_bookmakers || []).find(
+    (b) => b[selection] && Math.abs(b[selection] - best) < 1e-9);
+  return trouve ? trouve.bookmaker : null;
+}
+
+// La ligne de prono, toujours visible. Elle affiche cote a cote ce que dit le
+// modele et ce que dit le marche, parce que l'ecart entre les deux est la
+// vraie information : c'est lui qui decide si le prono vaut quelque chose.
+// Le verdict d'un prono, une fois le match joue. Signe + mot + couleur : la
+// couleur seule exclurait un lecteur sur douze et toute impression en gris.
+const MOTS_VERDICT = { juste: ["\u2713", "juste"], rate: ["\u2717", "rate"],
+                       inconnu: ["\u2014", "non verifiable"] };
+
+function pastilleVerdict(verdict, infobulle) {
+  if (!verdict) return "";
+  const [signe, mot] = MOTS_VERDICT[verdict] || MOTS_VERDICT.inconnu;
+  return `<span class="verdict-puce ${verdict}"${
+    infobulle ? ` title="${infobulle}"` : ""}>${signe} ${mot}</span>`;
+}
+
+function ligneProno(m) {
+  const p = m.prono_1n2;
+  if (!p) return "";
+  const book = bookmakerDe(m, p.selection);
+  const c = p.couverture;
+
+  const marche = p.p_marche === null
+    ? `<span class="stat">marche : ce marche n'est pas cote</span>`
+    : `<span class="stat">marche <b>${pourcent(p.p_marche)}</b></span>`;
+  const cote = p.meilleure_cote
+    ? `<span class="stat">meilleure cote <b>${p.meilleure_cote.toFixed(2)}</b>${
+        book ? " (" + book + ")" : ""}</span>`
+    : `<span class="stat">aucune cote en cache</span>`;
+  // L'esperance est calculee sur la probabilite melangee, jamais sur le modele
+  // seul : sinon un desaccord avec le marche se lirait comme un avantage.
+  const esperance = p.esperance === null ? "" : `<span class="stat"
+      title="calculee sur la probabilite melangee modele+marche (${pourcent(p.p_finale)}), pas sur le modele seul"
+      >esperance <b>${signe(p.esperance)}</b></span>`;
+
+  const couvert = c ? `<span class="couvert">
+      ${pastilleVerdict((m.verdicts || {}).couverture)}
+      <span class="etiquette">ou couvert</span>
+      <span class="puce pdc">${c.selection}</span> ${c.libelle} —
+      <b>${pourcent(c.p_modele)}</b> (+${(c.gagne_en_probabilite * 100).toFixed(0)} pts),
+      mais la cote equitable tombe de ${p.cote_equitable.toFixed(2)} a
+      ${c.cote_equitable.toFixed(2)}</span>` : "";
+
+  const v = (m.verdicts || {}).prono_1n2;
+  const classeV = v === "juste" ? " est-juste" : v === "rate" ? " est-rate" : "";
+  return `
+    <div class="prono${classeV}">
+      ${pastilleVerdict(v, (m.verdicts || {}).nuance)}
+      <span class="etiquette">prono 1N2</span>
+      <span class="puce ${PUCE_1N2[p.selection]}">${p.selection}</span>
+      <span class="titre">${p.libelle}</span>
+      <span class="stat">modele <b>${pourcent(p.p_modele)}</b></span>
+      ${marche}
+      ${cote}
+      ${esperance}
+      <span class="stat">echoue <b>${pourcent(1 - p.p_modele)}</b> du temps</span>
+      ${couvert}
+      ${p.reserves.length ? `<span class="fragile">${p.reserves.join(" ; ")}</span>` : ""}
+    </div>`;
+}
+
+// Une reserve longue repetee sur chaque ligne de chaque match devient du bruit
+// qu'on cesse de lire. On la reduit a un drapeau court dont l'infobulle porte
+// le texte complet, et le panneau deplie l'explique en entier.
+function drapeauReserve(texte) {
+  // Le repli garde les premiers mots plutot que la partie avant « : », qui
+  // sur une reserve d'absences donnait juste un nom d'equipe, sans information.
+  const court = texte.startsWith("aucun bookmaker") ? "non verifiable"
+    : (texte.startsWith("dispersion") ? texte.slice(0, texte.indexOf("(")).trim()
+       : texte.split(" ").slice(0, 4).join(" ") + "...");
+  return `<span class="drapeau" title="${texte.replace(/"/g, "&quot;")}">${court}</span>`;
+}
+
+// « non verifiable » etait exact tant que rien n'avait ete mesure. Une fois la
+// validation contre les comptes reels calculee, la remplacer par son resultat :
+// un drapeau qui reste identique apres qu'on a fait le travail devient un
+// mensonge par omission.
+function drapeauValidation(a) {
+  const v = a.validation;
+  if (!v) {
+    return `<span class="drapeau" title="Aucun bookmaker ne cote ce marche via l'API, et le modele n'a pas encore ete confronte aux comptes reels. Lance : python cli.py valider-annexes -c ${a.championnat || 'XX'}">jamais verifie</span>`;
+  }
+  const bon = v.ecart_calibration_max <= 0.05 && !v.biais_significatif;
+  const titre = `Verifie sur ${v.matchs} matchs hors echantillon : ecart maximal `
+    + `${(v.ecart_calibration_max * 100).toFixed(1)} % entre probabilite annoncee et `
+    + `frequence reelle ; biais ${v.biais >= 0 ? "+" : ""}${v.biais.toFixed(2)} `
+    + `+/- ${v.biais_ic.toFixed(2)} ${v.biais_significatif ? "(significatif)" : "(non significatif)"} ; `
+    + (v.bat_la_moyenne_de_ligue
+        ? "les forces par equipe ameliorent la prediction."
+        : "ATTENTION : les forces par equipe n'ameliorent pas la simple moyenne du championnat.")
+    + " Aucun bookmaker ne cote ce marche : cette verification remplace la contre-expertise du marche, elle ne l'egale pas.";
+  return `<span class="${bon ? "niveau" : "drapeau"}" title="${titre.replace(/"/g, "&quot;")}"
+    >calibre a ${(v.ecart_calibration_max * 100).toFixed(1)} % pres (${v.matchs} matchs)</span>`;
+}
+
+function lignesAnnexes(m) {
+  const rendus = (m.verdicts || {}).annexes || [];
+  return (m.pronos_annexes || []).map((a, index) => {
+    const v = rendus[index];
+    const classeV = v === "juste" ? " est-juste" : v === "rate" ? " est-rate" : "";
+    const signeLigne = a.selection === "plus" ? "+" : "−";
+    const duel = a.duel ? `<span class="stat">${a.duel.libelle}
+      <b>${pourcent(a.duel.p_modele)}</b></span>` : "";
+    return `
+      <div class="prono annexe${classeV}">
+        ${pastilleVerdict(v)}
+        <span class="etiquette">${a.libelle_compte}</span>
+        <span class="puce pdc">${signeLigne}</span>
+        <span class="titre">${a.libelle}</span>
+        <span class="stat">modele <b>${pourcent(a.p_modele)}</b></span>
+        <span class="stat">cote equitable <b>${a.cote_equitable.toFixed(2)}</b></span>
+        <span class="stat"><b>${a.attendu_total.toFixed(2)}</b> attendus
+          (${a.attendu_dom.toFixed(2)} / ${a.attendu_ext.toFixed(2)})</span>
+        ${duel}
+        ${drapeauValidation(a)}
+        ${a.reserves.filter((r) => r.startsWith("dispersion"))
+             .map(drapeauReserve).join(" ")}
+      </div>`;
+  }).join("");
+}
+
+// L'echelle complete des lignes. C'est le tableau qui compte reellement : sur
+// la ligne standard le modele est toujours proche de 50 %, puisque c'est
+// exactement la que le bookmaker la place.
+function tableauAnnexes(m) {
+  const annexes = m.pronos_annexes || [];
+  if (!annexes.length) return "";
+  return annexes.map((a) => `
+    <h3>${a.libelle_compte} — ${a.attendu_total.toFixed(2)} attendus
+      (${m.dom} ${a.attendu_dom.toFixed(2)}, ${m.ext} ${a.attendu_ext.toFixed(2)})</h3>
+    <div class="tableau">
+      <table>
+        <thead><tr><th>Ligne</th><th>Plus</th><th>Moins</th>
+          <th>Cote equitable (plus)</th><th>Cote equitable (moins)</th></tr></thead>
+        <tbody>${a.tous_les_totaux.map((t) => `<tr${
+          t.ligne === a.ligne ? ' class="retenue"' : ""}>
+          <td>${t.ligne}</td>
+          <td class="nombre">${pourcent(t.plus)}</td>
+          <td class="nombre">${pourcent(t.moins)}</td>
+          <td class="nombre">${t.plus > 0 ? (1 / t.plus).toFixed(2) : "—"}</td>
+          <td class="nombre">${t.moins > 0 ? (1 / t.moins).toFixed(2) : "—"}</td>
+        </tr>`).join("")}</tbody>
+      </table>
+    </div>
+    <div class="note">
+      Ligne surlignee : celle qui encadre le total attendu, donc celle qu'un
+      bookmaker proposerait. Le modele y est toujours proche de 50 % — ce n'est
+      pas une faiblesse du modele, c'est la definition de la ligne. Les lignes
+      extremes sont celles ou il a un avis, et ou le bookmaker prend sa marge.
+      <br>Estime sur ${a.matchs} matchs. Dispersion mesuree
+      <b>${a.dispersion.toFixed(2)}</b> (une loi de Poisson suppose 1.00${
+        a.dispersion > 1.2 ? " — au-dessus, les gros totaux sont plus frequents "
+          + "que ce tableau ne l'annonce, donc les probabilites des lignes hautes "
+          + "sont sous-estimees" : ""}).
+      <br>${a.validation ? blocValidation(a)
+        : `Aucun bookmaker ne cote ${a.libelle_compte} via l'API utilisee, et ce
+           modele n'a pas encore ete confronte aux comptes reels : rien ne peut
+           le contredire. Lance <code>python cli.py valider-annexes</code>.`}
+      <br>L'arbitre, qui pese lourd sur les cartons, n'est pas modelise.
+    </div>`).join("");
+}
+
+// Les absences. Une information manquante et une information negative ne
+// doivent pas se ressembler : « aucun absent signale » et « pas d'information
+// pour ce match » sont deux phrases differentes, et c'est tout l'interet de
+// les afficher. Le statut vient du serveur, on ne le devine pas ici.
+function ligneAbsences(m) {
+  const a = m.absences;
+  if (!a) return "";
+
+  if (a.statut !== "disponible") {
+    return `
+      <div class="prono absences">
+        <span class="etiquette">absences</span>
+        <span class="stat">${a.explication}</span>
+      </div>`;
+  }
+
+  const cote = (cle, equipe) => {
+    const liste = a[cle] || [];
+    if (!liste.length) return "";
+    const noms = liste.map((x) => `<span class="absent${x.suspension ? " susp" : ""}"
+      title="${x.motif}">${x.joueur}${x.suspension ? " (suspendu)" : ""}</span>`).join(", ");
+    return `<span class="stat"><b>${equipe} ${liste.length}</b> — ${noms}</span>`;
+  };
+
+  const dom = cote("dom", m.dom);
+  const ext = cote("ext", m.ext);
+  if (!dom && !ext) {
+    return `
+      <div class="prono absences">
+        <span class="etiquette">absences</span>
+        <span class="stat">aucun absent signale pour ce match</span>
+      </div>`;
+  }
+  return `
+    <div class="prono absences">
+      <span class="etiquette">absences</span>
+      ${dom}${ext}
+    </div>`;
+}
+
+const CLASSE_NIVEAU = {
+  "tres probable": "n-tres", "probable": "", "incertain": "", "sous reserve": "n-reserve",
+};
+
+// Les pronos les plus probables. Le bloc dit dans le meme souffle ce qu'ils
+// valent et ce qu'ils coutent : une cote equitable de 1.06 et une perte qui
+// annule dix-sept gains sont deux facons de lire le meme chiffre, et la
+// seconde est celle qu'on oublie.
+function blocPlusSurs(m) {
+  const surs = m.plus_surs || [];
+  if (!surs.length) {
+    return `<div class="cartouche rien">Rien ne ressort sans reserve sur ce match :
+      soit aucun marche n'est assez probable, soit le marche contredit le modele.
+      L'outil n'a pas d'avis a donner ici.</div>`;
+  }
+  return `
+    <div class="cartouche">
+      <strong>Les plus probables — ce ne sont pas des pronos sans risque.</strong>
+      <ul>${surs.map((p) => `<li>${p.libelle} — <b>${pourcent(p.p_modele)}</b>
+        <span class="cout">(cote equitable ${p.cote_equitable.toFixed(2)} ;
+        echoue 1 fois sur ${Math.round(p.echoue_1_fois_sur)}, et cette fois-la
+        annule ${Math.round(p.gains_annules)} gain(s))</span></li>`).join("")}</ul>
+    </div>
+    <div class="note">
+      Une forte probabilite se paie par une cote basse : plus le prono parait sur,
+      plus une seule perte coute cher, et moins il faut d'erreur d'estimation pour
+      rendre le pari perdant. A ${pourcent(surs[0].p_modele)}, il suffit que le
+      modele surestime de quelques points pour que l'esperance passe sous zero,
+      et le bookmaker offre le plus souvent moins que cette cote equitable —
+      trouver les exceptions est precisement le travail du tableau
+      « Ou le marche semble decale ». Aucune ligne d'ici n'est une mise
+      conseillee : elles n'ont pas passe les quatre conditions.
+    </div>`;
+}
+
+function tableauPronos(m) {
+  const pronos = m.pronos || [];
+  if (!pronos.length) return "";
+  return `
+    <div class="tableau">
+      <table>
+        <thead><tr>
+          <th>Marche</th><th>Prono</th><th>Modele</th><th>Marche</th>
+          <th>Cote equitable</th><th>Echoue</th><th>Niveau</th><th>Reserve</th>
+        </tr></thead>
+        <tbody>${pronos.map((p) => `<tr>
+          <td>${p.marche}</td>
+          <td>${p.libelle}</td>
+          <td class="nombre">${pourcent(p.p_modele)}</td>
+          <td class="nombre">${p.p_marche === null ? "non cote" : pourcent(p.p_marche)}</td>
+          <td class="nombre">${p.cote_equitable.toFixed(2)}</td>
+          <td class="nombre">1 fois sur ${Math.round(p.echoue_1_fois_sur)}</td>
+          <td><span class="niveau ${CLASSE_NIVEAU[p.niveau] || ""}">${p.niveau}</span></td>
+          <td class="reserve">${p.reserves.join(" ; ")}</td>
+        </tr>`).join("")}</tbody>
+      </table>
+    </div>
+    <div class="note">
+      « non cote » : aucun bookmaker ne propose ce marche via l'API, donc rien ne
+      peut contredire le modele dessus. Ces lignes ne sont pas plus fiables que
+      les autres — elles sont seulement moins verifiables.
+    </div>`;
+}
+
+// Chaque bloc n'apparait que si le modele a fourni la donnee : un modele plus
+// pauvre affiche moins, il ne casse pas la carte.
+function tableauStats(m) {
+  let html = "";
+
+  if (m.buts_dom !== null && m.clean_sheet) {
+    html += `
+      <h3>Buts attendus et cages inviolees</h3>
+      <div class="chiffresLigne">
+        <span>${m.dom} <b>${m.buts_dom.toFixed(2)}</b> buts attendus</span>
+        <span>${m.ext} <b>${m.buts_ext.toFixed(2)}</b></span>
+        <span>${m.dom} n'encaisse pas <b>${pourcent(m.clean_sheet.dom)}</b></span>
+        <span>${m.ext} n'encaisse pas <b>${pourcent(m.clean_sheet.ext)}</b></span>
+      </div>`;
+  }
+
+  if ((m.scores_probables || []).length) {
+    html += `
+      <h3>Scores les plus probables</h3>
+      <div class="chiffresLigne">${m.scores_probables.map(
+        ([score, p]) => `<span><b>${score}</b> ${pourcent(p)}</span>`).join("")}</div>
+      <div class="note">
+        Le score le plus probable ne depasse presque jamais 15 % : c'est pourquoi
+        le modele raisonne en marches et non en scores exacts.
+      </div>`;
+  }
+
+  const h = m.handicaps || {};
+  const cles = Object.keys(h).sort((a, b) => parseFloat(a) - parseFloat(b));
+  if (cles.length) {
+    html += `
+      <h3>Handicaps asiatiques</h3>
+      <div class="tableau">
+        <table>
+          <thead><tr><th>Handicap ${m.dom}</th><th>${m.dom}</th>
+            <th>${m.ext}</th><th>Rembourse</th></tr></thead>
+          <tbody>${cles.map((k) => `<tr>
+            <td>${k}</td>
+            <td class="nombre">${pourcent(h[k].dom)}</td>
+            <td class="nombre">${pourcent(h[k].ext)}</td>
+            <td class="nombre">${h[k].remboursement > 0.0005
+              ? pourcent(h[k].remboursement) : "—"}</td>
+          </tr>`).join("")}</tbody>
+        </table>
+      </div>`;
+  }
+  return html;
+}
+
+function blocValidation(a) {
+  const v = a.validation;
+  const l = v.calibration.map((c) =>
+    `<tr><td>${c.ligne}</td><td class="nombre">${pourcent(c.annonce)}</td>`
+    + `<td class="nombre">${pourcent(c.constate)}</td>`
+    + `<td class="nombre">${signe(c.ecart)}</td></tr>`).join("");
+  return `
+    Aucun bookmaker ne cote ${a.libelle_compte} via l'API : il n'y a pas de
+    contre-expertise du marche. A la place, ce modele a ete confronte aux
+    <strong>comptes reellement observes</strong> sur ${v.matchs} matchs hors
+    echantillon (le modele n'y voit jamais le futur) :
+    <div class="tableau" style="margin: 8px 0;">
+      <table><thead><tr><th>Ligne</th><th>Annonce</th><th>Constate</th><th>Ecart</th></tr></thead>
+      <tbody>${l}</tbody></table>
+    </div>
+    Biais ${v.biais >= 0 ? "+" : ""}${v.biais.toFixed(2)} ${a.libelle_compte}
+    par match ${v.biais_significatif
+      ? `(+/- ${v.biais_ic.toFixed(2)}) : <strong>significatif</strong>, le modele
+         ${v.biais < 0 ? "sur-estime" : "sous-estime"} systematiquement`
+      : `(+/- ${v.biais_ic.toFixed(2)}) : non distinguable de zero`}.
+    ${v.bat_la_moyenne_de_ligue
+      ? "Les forces par equipe ameliorent la prediction par rapport a la simple moyenne du championnat."
+      : "<strong>Les forces par equipe n'ameliorent PAS</strong> la prediction par rapport a la simple moyenne du championnat : le detail par equipe est decoratif ici."}
+    <br>Cette verification dit si les probabilites correspondent aux frequences.
+    Elle ne dit <em>pas</em> si un pari serait rentable : il n'existe aucune cote
+    historique de ${a.libelle_compte} dans les donnees.`;
+}
+
+// Un match de coupe entre deux divisions. Le chiffre existe, mais il n'a pas
+// le meme statut que les autres : dire d'ou il vient est la condition pour
+// qu'on puisse le lire sans se tromper sur ce qu'il vaut.
+function blocInterDivisions(m) {
+  const i = m.inter_divisions;
+  if (!i) return "";
+  const ponts = Object.entries(i.ponts)
+    .map(([paire, n]) => `${paire} : ${n}`).join(", ");
+  return `<div class="avertissement">
+    <strong>Estimation inter-divisions.</strong> ${m.dom} et ${m.ext} ne jouent pas
+    dans la meme division : aucun modele de championnat ne peut les comparer. Celui-ci
+    a ete entraine sur ${i.divisions.join(" + ")} d'un coup
+    (${i.matchs} matchs, ${i.equipes} equipes).
+    <div style="margin-top:6px">Ce qui met ces divisions a la meme echelle, ce sont les
+    equipes qui ont joue dans deux d'entre elles au fil des promotions et relegations
+    (${ponts}). Sans elles, l'ecart de niveau entre divisions ne serait pas mesurable.</div>
+    <div style="margin-top:6px"><strong>Ni la calibration ni le ROI mesures sur ce
+    championnat ne s'appliquent ici</strong> — ils ont ete etablis sur des rencontres
+    d'une seule division. Les comptes annexes (corners, cartons) sont volontairement
+    absents pour la meme raison.</div>
+  </div>`;
+}
+
+function panneauStats(m) {
+  if (m.pronos === undefined) {
+    return `<div class="vide">Ce serveur ne renvoie pas encore les statistiques
+      detaillees : il a ete demarre avant cette version. Relance-le
+      (Ctrl+C puis <code>python web.py</code>).</div>`;
+  }
+  return `${blocInterDivisions(m)}<h3>Pronos les plus probables</h3>${blocPlusSurs(m)}
+    <h3>Tous les marches, du plus probable au moins probable</h3>${tableauPronos(m)}
+    ${tableauStats(m)}
+    ${tableauAnnexes(m)}`;
+}
+
+// Un declencheur, un panneau, construit a la premiere ouverture seulement.
+function brancherPanneau(carte, nom, construire) {
+  const bouton = carte.querySelector(`.declencheur[data-panneau="${nom}"]`);
+  const detail = carte.querySelector(`.detail[data-panneau="${nom}"]`);
+  const libelle = bouton.dataset.libelle;
+  bouton.addEventListener("click", () => {
+    const ouvert = detail.hidden;
+    if (ouvert && !detail.innerHTML) detail.innerHTML = construire();
+    detail.hidden = !ouvert;
+    bouton.setAttribute("aria-expanded", String(ouvert));
+    bouton.textContent = `${libelle} ${ouvert ? "▴" : "▾"}`;
+  });
+}
+
+// Le score, une fois le match joue. Trois etats, et le troisieme est le plus
+// frequent : football-data publie par lots, avec deux a treize jours de retard
+// selon la ligue. Se taire laisserait croire que le match n'a pas eu lieu.
+function blocScore(m) {
+  if (!m.joue) return "";
+  if (!m.resultat) {
+    // Meme piege que pour le detail des bookmakers : `web/page.html` est relu a
+    // chaque requete, `web.py` seulement au demarrage. Une page neuve devant un
+    // serveur ancien afficherait « pas encore publie » a tort.
+    const sait = (ETAT && ETAT.capacites) || [];
+    if (!sait.includes("resultats_api_football")) {
+      return `<span class="score"><span class="attente">joue — ce serveur ne
+        sait pas encore lire les scores : il a ete demarre avant cette version.
+        Relance-le (Ctrl+C puis python web.py).</span></span>`;
+    }
+    return `<span class="score"><span class="attente">joue — resultat pas
+      encore publie</span></span>`;
+  }
+  const r = m.resultat;
+  const b = (m.verdicts || {}).bilan;
+  // La source du score. API-Football le donne le soir meme, corners et cartons
+  // compris ; football-data publie par lots, deux a treize jours plus tard.
+  const source = r.source === "api_football"
+    ? "score et statistiques API-Football, le soir meme"
+    : "score football-data (publie par lots)";
+  const compte = b && b.verifiables
+    ? `<span class="bilan-verdict" title="${
+        b.inconnu ? b.inconnu + " prono(s) non verifiable(s) : " + source : source
+      }">${b.juste}/${b.verifiables} prono(s) juste(s)${
+        b.inconnu ? ` — ${b.inconnu} non verifiable(s)` : ""}</span>`
+    : "";
+  return `<span class="score" title="${source}">${r.buts_dom} – ${r.buts_ext}</span>${compte}`;
+}
+
+function carteMatch(m) {
+  const d = new Date(m.date);
+  const heure = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const div = document.createElement("div");
+  // Le cadre suit la double chance, pas le 1N2 sec : c'est celle que la carte
+  // met en avant sous « ou couvert », et celle que l'oeil retient.
+  const couverture = (m.verdicts || {}).couverture;
+  div.className = "match"
+    + (couverture === "juste" ? " cadre-juste"
+       : couverture === "rate" ? " cadre-rate" : "");
+  div.innerHTML = `
+    <div class="heure">${heure}</div>
+    <div>
+      <div class="equipes">${m.ligue ? `<span class="ligue">${m.ligue}</span>` : ""}${
+        m.inter_divisions ? `<span class="inter" title="Estime par le modele commun aux divisions ${
+          m.inter_divisions.divisions.join("+")} — calibration non mesuree">inter-divisions</span>` : ""
+      }${m.dom} <span class="books">contre</span> ${m.ext}${blocScore(m)}</div>
+      <div class="secondaire">
+        <span>+2.5 buts ${pourcent(m.plus25)}</span>
+        <span>BTTS ${pourcent(m.btts)}</span>
+        <span>${m.buts.toFixed(2)} buts attendus</span>
+        <button type="button" class="declencheur" data-panneau="books"
+                data-libelle="${m.bookmakers} bookmakers"
+                aria-expanded="false">${m.bookmakers} bookmakers ▾</button>
+        <button type="button" class="declencheur" data-panneau="stats"
+                data-libelle="stats &amp; pronos"
+                aria-expanded="false">stats &amp; pronos ▾</button>
+      </div>
+      ${(m.peu_de_donnees || []).length ? `<div class="fragile">${
+        m.peu_de_donnees.map((e) => `${e.equipe} n'a que ${e.matchs} match(s) dans
+        l'historique charge`).join(", ")} : ces pourcentages reposent sur presque rien.</div>`
+        : ""}
+    </div>
+    <div>
+      <div class="barre">
+        ${["1", "N", "2"].map((sel, i) => {
+          const part = m[sel];
+          const classe = ["b1", "bn", "b2"][i];
+          // sous 12 % le texte ne tient pas : on le laisse a l'infobulle
+          return `<span class="${classe}" style="width:${part * 100}%"
+                   title="${sel} : ${pourcent(part)}">${part >= 0.12 ? pourcent(part) : ""}</span>`;
+        }).join("")}
+      </div>
+      <div class="secondaire"><span>1 domicile</span><span>N nul</span><span>2 exterieur</span></div>
+    </div>
+    ${ligneProno(m)}
+    ${lignesAnnexes(m)}
+    ${ligneAbsences(m)}
+    <div class="detail" data-panneau="books" hidden></div>
+    <div class="detail" data-panneau="stats" hidden></div>`;
+
+  // Les tableaux ne sont construits qu'au premier depliage : une page de
+  // quatorze matchs a vingt bookmakers et vingt marches ferait sinon des
+  // milliers de lignes que personne ne lit.
+  brancherPanneau(div, "books", () => tableauBookmakers(m));
+  brancherPanneau(div, "stats", () => panneauStats(m));
+  return div;
+}
+
+let LIGUES = [];              // championnats et age de leurs cotes en cache
+let ETAT = null;              // dernier etat recu du serveur
+const CHOISIES = new Map();   // jambes cochees, par cle
+
+const jourDe = (iso) => new Date(iso).toLocaleDateString("sv-SE");  // AAAA-MM-JJ local
+
+function remplirJours(matchs, ecartes) {
+  const liste = $("jour");
+  const garde = liste.value;
+  // Les ecartes comptent : une journee dont toutes les rencontres ont ete
+  // laissees de cote existe quand meme, et son absence du filtre se lirait
+  // comme « aucun match ce jour-la », ce qui est faux.
+  const jours = [...new Set([...matchs, ...(ecartes || [])]
+    .map((m) => jourDe(m.date)))].sort();
+  liste.textContent = "";
+  const tous = document.createElement("option");
+  tous.value = ""; tous.textContent = "Tous les jours";
+  liste.appendChild(tous);
+  for (const j of jours) {
+    const option = document.createElement("option");
+    option.value = j;
+    option.textContent = libelleJour(j + "T12:00:00");
+    liste.appendChild(option);
+  }
+  liste.value = jours.includes(garde) ? garde : "";
+}
+
+function filtrer() {
+  if (!ETAT) return;
+  const jour = $("jour").value;
+  const matchs = jour ? ETAT.matchs.filter((m) => jourDe(m.date) === jour) : ETAT.matchs;
+  const lignes = jour
+    ? ETAT.opportunites.filter((o) => jourDe(o.date) === jour) : ETAT.opportunites;
+  const ecartes = jour
+    ? (ETAT.ecartes || []).filter((e) => jourDe(e.date) === jour) : ETAT.ecartes;
+  afficherEcartes(ecartes);
+  afficherMatchs(matchs, ecartes);
+  afficherCoupon(lignes);
+  afficherOpportunites(lignes);
+  $("section-opportunites").hidden = !lignes.length;
+  pastille("n-matchs", matchs.length);
+  pastille("n-opportunites", lignes.filter((o) => o.retenue).length);
+}
+
+function afficherMatchs(matchs, ecartes) {
+  const hote = $("matchs");
+  hote.textContent = "";
+  $("compte-matchs").textContent = matchs.length ? `— ${matchs.length}` : "";
+  if (!matchs.length) {
+    $("titre-matchs").textContent = "Matchs a venir";
+    if (ecartes && ecartes.length) {
+      // Le cas d'Arsenal - Coventry City : la rencontre existe, le modele ne
+      // peut pas l'estimer. Se taire laisserait croire qu'il n'y a pas match.
+      const seule = ecartes.length === 1;
+      hote.innerHTML = `<div class="vide">Aucun match estimable ce jour-la.
+        ${seule ? "La seule rencontre au programme a ete ecartee"
+                : `Les ${ecartes.length} rencontres au programme ont ete ecartees`} —
+        le detail est juste en dessous. C'est le cas des matchs de coupe, ou
+        l'adversaire vient d'un autre championnat que celui charge ici.</div>`;
+      return;
+    }
+    hote.innerHTML = ETAT && ETAT.jour
+      ? `<div class="vide">Aucun match exploitable aujourd'hui. Soit aucune ligue
+         suivie ne joue, soit les rencontres du jour ont ete ecartees faute
+         d'historique — la liste des ecartes ci-dessous le dit. Choisis
+         « Toutes les ligues » pour voir les jours suivants.</div>`
+      : `<div class="vide">Aucun match a venir dans les cotes en cache.
+         Clique sur « Rafraichir les cotes » pour interroger l'API.</div>`;
+    return;
+  }
+  // « Matchs a venir » devient faux des qu'on choisit une journee passee.
+  const joues = matchs.filter((m) => m.joue).length;
+  $("titre-matchs").textContent =
+    joues === 0 ? "Matchs a venir"
+    : joues === matchs.length ? "Matchs joues"
+    : "Matchs";
+  let jourCourant = null;
+  for (const m of matchs) {
+    const libelle = libelleJour(m.date);
+    if (libelle !== jourCourant) {
+      jourCourant = libelle;
+      const titre = document.createElement("div");
+      titre.className = "jour";
+      titre.textContent = libelle;
+      hote.appendChild(titre);
+    }
+    hote.appendChild(carteMatch(m));
+  }
+}
+
+function afficherRapportLigues(ligues) {
+  const bloc = $("rapport-ligues");
+  bloc.hidden = !ligues || !ligues.length;
+  if (bloc.hidden) return;
+  const ok = ligues.filter((l) => !l.erreur);
+  const rates = ligues.filter((l) => l.erreur);
+  const sansCotes = LIGUES.filter((l) => l.age_cotes_minutes === null).length;
+  bloc.innerHTML = `${ok.length} ligue(s) lue(s) : `
+    + ok.map((l) => `${l.code} (${l.matchs})`).join(", ")
+    + (rates.length ? `. Echec sur ${rates.map((l) => l.code + " : " + l.erreur).join(" ; ")}` : "")
+    + (sansCotes ? `. ${sansCotes} ligue(s) sans cotes en cache — utilise `
+        + `« Rafraichir les cotes » pour les interroger (2 credits chacune).` : "");
+}
+
+function afficherEcartes(ecartes) {
+  const hote = $("ecartes");
+  hote.hidden = !ecartes || !ecartes.length;
+  if (hote.hidden) return;
+  const noms = [...new Set(ecartes.flatMap((e) => e.inconnues))].join(", ");
+  hote.textContent = `${ecartes.length} match(s) laisse(s) de cote : `
+    + ecartes.map((e) => `${e.dom} - ${e.ext}`).join(", ")
+    + `. ${noms} n'a pas d'historique dans les saisons chargees (promu ?), `
+    + "le modele ne peut rien en estimer.";
+}
+
+// Le bilan mesure de la regle, en tete du coupon. « Gain attendu » est une
+// prevision du modele sur lui-meme ; ce bloc dit ce que la meme regle a
+// reellement rendu sur l'historique. Quand les deux se contredisent, c'est la
+// mesure qui a raison, et elle doit se lire avant les chiffres flatteurs.
+function blocBilan(attendu) {
+  const p = ETAT && ETAT.performance;
+  if (!p) {
+    return `<div class="bilan">${ETAT && ETAT.multi
+      ? `Le bilan mesure de cette regle est propre a un championnat : choisis-en
+         un seul pour le voir. Cumule sur plusieurs ligues, il melangerait des
+         mesures qui n'ont pas le meme echantillon.`
+      : `Cette regle n'a pas encore ete mesuree sur ce championnat. Lance
+         <code>python cli.py performance -c ${ETAT ? ETAT.championnat : "XX"}</code>
+         pour savoir ce qu'elle a reellement rendu.`}
+      Le « gain annonce » ci-dessous est une prevision du modele sur lui-meme,
+      pas un resultat constate.</div>`;
+  }
+  const perdante = p.significatif && p.roi < 0;
+  return `
+    <div class="bilan ${perdante ? "perdante" : ""}">
+      <div>Mesure hors echantillon sur ${p.matchs} matchs :
+        cette regle a retenu ${p.nb_paris} paris et rendu
+        <span class="chiffre">${signe(p.roi)}</span> par pari,
+        quand elle en annoncait <span class="chiffre">${signe(p.esperance_annoncee)}</span>.
+        ${p.significatif
+          ? `L'intervalle de confiance a 95 % [${signe(p.roi_bas)}, ${signe(p.roi_haut)}]
+             ne contient pas zero : l'ecart n'est pas du hasard.`
+          : `L'intervalle [${signe(p.roi_bas)}, ${signe(p.roi_haut)}] contient zero :
+             rien n'est demontre dans un sens ni dans l'autre.`}
+      </div>
+      <div class="comparaison">
+        Sur les memes matchs, parier simplement le favori des bookmakers aurait rendu
+        ${signe(p.roi_favori_marche)}, et parier toutes les selections
+        ${signe(p.roi_tout_parier)}.
+        ${perdante ? "Les chiffres ci-dessous restent affiches parce qu'ils sont "
+          + "le calcul reel de la methode — pas parce qu'ils sont a suivre." : ""}
+      </div>
+    </div>`;
+}
+
+// Quand le backtest a mesure que le modele n'apporte rien (a proche de 0), la
+// liste des paris se vide. Une page muette laisserait croire a un bug ; c'est
+// au contraire le seul cas ou l'outil dit la verite sans se contredire.
+function blocAucunPari() {
+  const a = ETAT.poids_modele;
+  if (a === undefined || a === null) return "";
+  if (a > 0.05) {
+    return `<div class="bilan">Aucune selection ne passe les quatre conditions
+      aujourd'hui. C'est le cas le plus frequent, et le bon comportement : la
+      methode n'a pas vocation a trouver un pari chaque jour.</div>`;
+  }
+  return `
+    <div class="bilan">
+      <div>Aucun pari propose, et c'est <strong>voulu</strong>. Le poids du modele
+        face au marche a ete mesure par backtest a <span class="chiffre">a = ${a.toFixed(2)}</span>
+        sur ce championnat${ETAT.poids_modele_defaut !== undefined
+          ? ` (la valeur par defaut, non mesuree, etait ${ETAT.poids_modele_defaut.toFixed(2)})` : ""}.
+        Autrement dit : sur l'historique, le modele n'ameliore pas l'estimation
+        des bookmakers. Ses probabilites valent donc celles du marche, la marge
+        des books rend l'esperance negative, et rien n'est retenu.</div>
+      <div class="comparaison">
+        Ce n'est pas un reglage a contourner. Tant que le modele ne bat pas le
+        marche sur ce championnat, proposer des paris reviendrait a parier sur
+        son propre bruit — ce que la mesure de la regle precedente avait chiffre.
+        Les selections restent listees ci-dessous avec leur motif de rejet.
+      </div>
+    </div>`;
+}
+
+function afficherCoupon(lignes) {
+  const bloc = $("coupon");
+  const retenues = lignes.filter((o) => o.retenue);
+  if (retenues.length === 0) {
+    bloc.hidden = lignes.length === 0;
+    if (!bloc.hidden) bloc.innerHTML = blocAucunPari();
+    return;
+  }
+  bloc.hidden = false;
+  const mise = retenues.reduce((t, o) => t + o.mise, 0);
+  const gain = retenues.reduce((t, o) => t + o.mise * o.cote, 0);
+  const attendu = retenues.reduce((t, o) => t + o.mise * o.esperance, 0);
+  const bankroll = Number($("bankroll").value) || 1;
+  bloc.innerHTML = `
+    ${blocBilan(attendu)}
+    <div class="chiffresCle">
+      <div><div class="valeur">${retenues.length}</div>
+           <div class="clef">selections retenues</div></div>
+      <div><div class="valeur">${mise.toFixed(2)}</div>
+           <div class="clef">mise totale (${pourcent(mise / bankroll)} de la bankroll)</div></div>
+      <div><div class="valeur">${gain.toFixed(2)}</div>
+           <div class="clef">retour si toutes passent</div></div>
+      <div><div class="valeur">${attendu >= 0 ? "+" : ""}${attendu.toFixed(2)}</div>
+           <div class="clef" title="somme des mises x esperance annoncee — une prevision du modele sur lui-meme, a lire avec la mesure ci-dessus">gain annonce par le modele</div></div>
+    </div>
+    <div class="note">
+      Ce sont des paris <strong>separes</strong>, pas un combine : chacun gagne ou perd
+      de son cote. C'est la forme que la methode recommande. Coche des lignes ci-dessous
+      pour voir ce que deviendrait un combine.
+    </div>
+    ${mise / bankroll > (ETAT.seuil_alerte_jour || 0.1) ? `<div class="avertissement">
+      <strong>${pourcent(mise / bankroll)} de la bankroll engages sur cette journee.</strong>
+      Le plafond de ${pourcent(ETAT.part_plafond)} est par pari, pas par jour : en cumulant
+      les ligues, le total monte sans qu'aucun pari ne le depasse. Rien ne t'oblige a
+      tout jouer le meme jour.</div>` : ""}`;
+}
+
+function afficherOpportunites(lignes) {
+  const corps = $("corps-opportunites");
+  corps.textContent = "";
+  const retenues = lignes.filter((o) => o.retenue).length;
+  $("compte-opportunites").textContent = lignes.length
+    ? `— ${lignes.length} selections analysees, ${retenues} passent les quatre conditions` : "";
+  for (const o of lignes) {
+    const tr = document.createElement("tr");
+    tr.className = o.alerte ? "alerte" : (o.retenue ? "retenue" : "");
+    const statut = o.retenue ? "retenue"
+      : (o.alerte ? "divergence" : (o.motifs[0] || ""));
+    const cle = `${o.ligue || ""}|${o.dom}|${o.ext}|${o.marche}|${o.selection}`;
+    const combinable = o.marche === "1N2" || o.marche.startsWith("plus_moins_");
+    tr.innerHTML = `
+      <td class="case">${combinable
+        ? `<input type="checkbox" data-cle="${cle}" ${CHOISIES.has(cle) ? "checked" : ""}>`
+        : ""}</td>
+      <td>${o.ligue ? `<span class="ligue">${o.ligue}</span>` : ""}${o.dom} - ${o.ext}</td>
+      <td>${o.marche}</td>
+      <td>${o.selection}</td>
+      <td class="nombre">${pourcent(o.p_modele)}</td>
+      <td class="nombre">${pourcent(o.p_marche)}</td>
+      <td class="nombre">${pourcent(o.ecart)}</td>
+      <td class="nombre">${o.cote.toFixed(2)}</td>
+      <td>${o.bookmaker}</td>
+      <td class="nombre">${signe(o.esperance)}</td>
+      <td class="nombre">${o.mise ? o.mise.toFixed(2) : "—"}</td>
+      <td class="motif">${statut}</td>`;
+    const case_ = tr.querySelector("input");
+    if (case_) case_.addEventListener("change", () => basculer(case_, o, cle));
+    corps.appendChild(tr);
+  }
+}
+
+function basculer(case_, o, cle) {
+  if (case_.checked) {
+    CHOISIES.set(cle, { dom: o.dom, ext: o.ext, marche: o.marche,
+                        selection: o.selection, cote: o.cote, p_finale: o.p_finale,
+                        ligue: o.ligue || $("championnat").value });
+  } else {
+    CHOISIES.delete(cle);
+  }
+  calculerCombine();
+}
+
+async function calculerCombine() {
+  const section = $("section-combine");
+  const jambes = [...CHOISIES.values()];
+  $("compte-combine").textContent = jambes.length ? `— ${jambes.length} jambe(s)` : "";
+  if (jambes.length === 0) { section.hidden = true; return; }
+  section.hidden = false;
+  $("combine").innerHTML = '<div class="note">Calcul...</div>';
+  const url = `/api/combine?championnat=${$("championnat").value}`
+    + `&bankroll=${$("bankroll").value}`;
+  const reponse = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(jambes),
+  });
+  const c = await reponse.json();
+  if (!reponse.ok) {
+    $("combine").innerHTML = `<div class="verdict mauvais">${c.erreur}</div>`;
+    return;
+  }
+  afficherCombine(c);
+}
+
+function afficherCombine(c) {
+  const bloc = $("combine");
+  const verdict = c.retenu
+    ? `<div class="verdict bon">Ce combine passe les conditions. Mise conseillee
+       ${c.mise.toFixed(2)}, gain ${c.gain_si_tout_passe.toFixed(2)} si tout passe.</div>`
+    : `<div class="verdict mauvais"><strong>Ce combine n'est pas retenu.</strong><ul
+       class="jambes">${c.motifs.map((m) => `<li>${m}</li>`).join("")}</ul></div>`;
+  const ecartCote = c.cote_totale / c.cote_equitable - 1;
+  bloc.innerHTML = `
+    <div class="chiffresCle">
+      <div><div class="valeur">${c.cote_totale.toFixed(2)}</div>
+           <div class="clef">cote totale offerte</div></div>
+      <div><div class="valeur">${c.cote_equitable.toFixed(2)}</div>
+           <div class="clef">cote equitable selon le modele</div></div>
+      <div><div class="valeur">${pourcent(c.p_modele)}</div>
+           <div class="clef">chances que TOUT passe</div></div>
+      <div><div class="valeur">${signe(c.esperance)}</div>
+           <div class="clef">esperance</div></div>
+    </div>
+    ${verdict}
+    <ul class="jambes">${c.jambes.map((j) =>
+      `<li>${j.dom} - ${j.ext} : ${j.marche} <strong>${j.selection}</strong>
+       @ ${j.cote.toFixed(2)} — le modele lui donne ${pourcent(j.p_modele)}</li>`).join("")}</ul>
+    ${c.correlations.map((n) => `<div class="note">${n}</div>`).join("")}
+    <div class="note">${c.recale
+      ? `Probabilite recalee sur le marche, comme pour un pari simple.
+         Le modele seul, plus extreme, annoncerait ${pourcent(c.p_modele_seul)}.`
+      : "Probabilite au modele seul : plus optimiste qu'un pari simple ne l'afficherait."}
+    </div>
+    <div class="note">
+      La cote offerte est ${ecartCote >= 0 ? "superieure" : "inferieure"} de
+      ${Math.abs(ecartCote * 100).toFixed(1)} % a la cote equitable.
+      Chaque jambe porte la marge du bookmaker et elles se multiplient : c'est ce qui
+      rend les longs combines si rentables — pour le book. Et quand l'esperance d'un
+      combine est positive, c'est que celles des jambes se multiplient : leurs erreurs
+      d'estimation se multiplient avec.
+    </div>`;
+}
+
+function afficher(etat) {
+  $("chiffres").textContent =
+    `Bankroll ${etat.bankroll.toFixed(2)}  |  Exposition en cours ${etat.exposition.toFixed(2)}`
+    + `  |  Mise maximale par pari ${etat.plafond_mise.toFixed(2)}`;
+  $("rappel").textContent =
+    "Les probabilites affichees sont des estimations assorties d'une marge d'erreur reelle, "
+    + "pas des pronostics. Une ligne orange signale un ecart important entre le modele et le "
+    + "marche : c'est un signal d'alerte, pas une recommandation. Mise plafonnee a "
+    + (etat.part_plafond * 100).toFixed(0) + " % de la bankroll, Kelly divise par 4.";
+  $("sous").textContent =
+    `${etat.nom} — modeles entraines sur ${etat.saisons} saisons`
+    + (etat.multi
+       ? ` — ${etat.ligues.filter((l) => !l.erreur).length} ligue(s) lue(s)`
+         + (etat.age_cotes_minutes === null ? ""
+            : ` — cotes datees de ${ageLisible(etat.age_cotes_minutes)} au plus vieux`)
+       : (etat.age_cotes_minutes === null ? " — aucune cote en cache"
+          : " — cotes datees de " + ageLisible(etat.age_cotes_minutes)));
+  ETAT = etat;
+  remplirJours(etat.matchs, etat.ecartes);
+  $("jour").disabled = Boolean(etat.jour);
+  afficherRapportLigues(etat.ligues);
+  filtrer();
+  $("section-matchs").hidden = false;
+  $("quota").textContent = etat.quota;
+  $("avertissement").textContent = etat.avertissement;
+  $("genere").textContent = "Page generee le " + new Date(etat.genere).toLocaleString("fr-FR");
+  $("etat").hidden = true;
+}
+
+// Un seul aller-retour, contrairement au mode « toutes les ligues » qui en
+// fait un par championnat : c'est le serveur qui sait quelles ligues jouent
+// aujourd'hui, et lui seul peut eviter d'entrainer les autres.
+async function demanderLeJour(forcer) {
+  if (forcer) {
+    // ETAT.ligues n'existe qu'apres un premier affichage ; sans lui on annonce
+    // le pire cas plutot qu'un chiffre invente.
+    const connues = ETAT && ETAT.jour && ETAT.ligues ? ETAT.ligues.length : null;
+    const cout = connues === null ? `${LIGUES.length * 2} credits au maximum`
+                                  : `${connues * 2} credits`;
+    if (!confirm(`Rafraichir les ligues qui jouent aujourd'hui coutera ${cout} `
+                 + `The Odds API. Continuer ?`)) {
+      throw new Error("Rafraichissement annule.");
+    }
+  }
+  $("etat").textContent = forcer
+    ? "Recuperation des cotes des ligues du jour..."
+    : "Lecture des ligues qui jouent aujourd'hui (quelques secondes par ligue)...";
+  const url = `/api/aujourdhui?bankroll=${$("bankroll").value}`;
+  const reponse = await fetch(url, { method: forcer ? "POST" : "GET" });
+  const charge = await reponse.json();
+  if (!reponse.ok) throw new Error(charge.erreur || "Erreur inattendue.");
+  return charge;
+}
+
+async function demanderToutesLesLigues(forcer) {
+  const avecCotes = LIGUES.filter((l) => l.age_cotes_minutes !== null);
+  const cibles = forcer ? LIGUES : avecCotes;
+  if (!cibles.length) {
+    throw new Error("Aucune ligue n'a de cotes en cache. Choisis une ligue et "
+      + "clique sur « Rafraichir les cotes », ou rafraichis toutes les ligues.");
+  }
+  if (forcer && !confirm(
+      `Rafraichir ${cibles.length} ligues coutera ${cibles.length * 2} credits `
+      + `The Odds API. Continuer ?`)) {
+    throw new Error("Rafraichissement annule.");
+  }
+
+  const bankroll = $("bankroll").value;
+  const fusion = { matchs: [], opportunites: [], ecartes: [], ligues: [] };
+  let dernier = null;
+  for (const [index, ligue] of cibles.entries()) {
+    $("etat").textContent = `${ligue.code} — ${ligue.nom} `
+      + `(${index + 1} sur ${cibles.length})...`;
+    const url = `/api/${forcer ? "rafraichir" : "jour"}?championnat=${ligue.code}`
+      + `&bankroll=${bankroll}`;
+    try {
+      const reponse = await fetch(url, { method: forcer ? "POST" : "GET" });
+      const charge = await reponse.json();
+      if (!reponse.ok) throw new Error(charge.erreur);
+      dernier = charge;
+      for (const m of charge.matchs) fusion.matchs.push({ ...m, ligue: ligue.code });
+      for (const o of charge.opportunites) {
+        fusion.opportunites.push({ ...o, ligue: ligue.code });
+      }
+      fusion.ecartes.push(...charge.ecartes);
+      fusion.ligues.push({ ...ligue, matchs: charge.matchs.length, erreur: null });
+    } catch (erreur) {
+      fusion.ligues.push({ ...ligue, matchs: 0, erreur: erreur.message });
+    }
+  }
+  if (!dernier) throw new Error("Aucune ligue n'a pu etre chargee.");
+  fusion.matchs.sort((a, b) => a.date.localeCompare(b.date));
+  fusion.opportunites.sort((a, b) => b.esperance - a.esperance);
+  // La mesure de performance est propre a un championnat : la garder ici
+  // attribuerait le bilan de la derniere ligue lue a toutes les autres.
+  return { ...dernier, ...fusion, nom: "toutes les ligues",
+           age_cotes_minutes: null, multi: true, performance: null };
+}
+
+async function demander(forcer) {
+  const code = $("championnat").value;
+  const bankroll = $("bankroll").value;
+  const boutons = [$("charger"), $("rafraichir")];
+  boutons.forEach((b) => (b.disabled = true));
+  $("erreur").hidden = true;
+  $("etat").hidden = false;
+  $("etat").textContent = forcer
+    ? "Recuperation des cotes..."
+    : "Chargement de l'historique et entrainement du modele (quelques secondes)...";
+  try {
+    let charge;
+    if (code === "@jour") {
+      charge = await demanderLeJour(forcer);
+    } else if (code === "*") {
+      charge = await demanderToutesLesLigues(forcer);
+    } else {
+      const url = `/api/${forcer ? "rafraichir" : "jour"}?championnat=${code}`
+        + `&bankroll=${bankroll}`;
+      const reponse = await fetch(url, { method: forcer ? "POST" : "GET" });
+      charge = await reponse.json();
+      if (!reponse.ok) throw new Error(charge.erreur || "Erreur inattendue.");
+    }
+    CHOISIES.clear();
+    $("section-combine").hidden = true;
+    pastille("n-combine", 0);
+    afficher(charge);
+    montrerVue("matchs");
+    afficherApis();
+    localStorage.setItem("foot_edge", JSON.stringify({ code, bankroll }));
+  } catch (erreur) {
+    $("etat").hidden = true;
+    $("erreur").hidden = false;
+    $("erreur").textContent = erreur.message;
+  } finally {
+    boutons.forEach((b) => (b.disabled = false));
+  }
+}
+
+// Le combine vers un objectif de gain. Le chiffre demande ("10 qui rapportent
+// 90") est une cote de 9 ; en pari simple c'est la seule bande de cotes dont le
+// backtest prouve la perte. L'empilement de favoris y arrive autrement, mais
+// pas plus surement : le panneau montre la probabilite reelle et la marge
+// payee AVANT la liste des matchs, parce que c'est ce qu'on oublie de lire.
+// --- Navigation ----------------------------------------------------------
+// Une vue a la fois. Le bouton « Combine du jour » y amene de lui-meme : sur
+// une page de plusieurs ecrans, calculer un resultat que l'utilisateur ne voit
+// pas revient a ne rien afficher.
+function montrerVue(nom) {
+  for (const vue of document.querySelectorAll(".vue")) {
+    vue.classList.toggle("active", vue.dataset.vue === nom);
+  }
+  for (const onglet of document.querySelectorAll(".onglet")) {
+    onglet.setAttribute("aria-selected", String(onglet.dataset.vue === nom));
+  }
+  // Toujours remonter : changer de vue sans bouger le defilement fait arriver
+  // au milieu du contenu, a une hauteur qui n'a de sens que pour la vue qu'on
+  // vient de quitter.
+  window.scrollTo({ top: 0, behavior: doux() ? "auto" : "smooth" });
+}
+
+const doux = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function pastille(id, valeur) {
+  const cible = $(id);
+  cible.textContent = valeur ? String(valeur) : "";
+}
+
+// Le jour sur lequel porte le combine : celui du filtre Jour, ou celui de la
+// vue « Aujourd'hui — toutes ligues » ou ce filtre est desactive. Vide = tout
+// le cache, et le panneau le dira au lieu de laisser croire a une seule journee.
+function jourDuCombine() {
+  if (ETAT && ETAT.jour) return ETAT.jour;
+  return $("jour").value || "";
+}
+
+// Les nombres montent jusqu'a leur valeur. La montee est un agrement : la valeur
+// vraie est ecrite AVANT toute animation, et l'animation ne fait que la rejouer
+// depuis zero. C'est ce qui rend l'affichage correct meme quand rien ne s'anime
+// — onglet en arriere-plan, ou requestAnimationFrame gele par le navigateur.
+// Faire dependre le chiffre affiche de l'animation le laisserait a "0".
+function compter(element, cible, decimales, prefixe) {
+  const ecrire = (v) => (element.textContent = (prefixe || "") + v.toFixed(decimales));
+  ecrire(cible);
+  const fixe = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (fixe || document.hidden || !(cible > 0)) return;
+  const duree = 620;
+  const depart = performance.now();
+  const pas = (maintenant) => {
+    const t = Math.min(1, (maintenant - depart) / duree);
+    ecrire(cible * (1 - Math.pow(1 - t, 3)));
+    if (t < 1) requestAnimationFrame(pas);
+    else ecrire(cible);
+  };
+  requestAnimationFrame(pas);
+}
+
+// Une cote est multiplicative : de x1.5 a x100, un curseur lineaire passerait
+// les trois quarts de sa course entre x25 et x100, la zone la moins utile. En
+// echelle logarithmique chaque cran multiplie par un facteur constant.
+const CIBLE_MIN = 1.5, CIBLE_MAX = 100;
+const curseurVersCote = (v) =>
+  Math.exp(Math.log(CIBLE_MIN) + (Math.log(CIBLE_MAX) - Math.log(CIBLE_MIN)) * v / 100);
+const coteVersCurseur = (c) =>
+  100 * (Math.log(Math.max(CIBLE_MIN, Math.min(CIBLE_MAX, c))) - Math.log(CIBLE_MIN))
+      / (Math.log(CIBLE_MAX) - Math.log(CIBLE_MIN));
+
+const cibleChoisie = () => {
+  const brut = curseurVersCote(Number($("cible").value));
+  return brut < 10 ? Math.round(brut * 2) / 2 : Math.round(brut);   // pas de x9.37
+};
+const miseChoisie = () => Math.max(1, Number($("mise").value) || 10);
+
+// Le libelle et le gain projete suivent le curseur immediatement, sans attendre
+// le serveur : c'est ce qui donne la sensation de reglage continu.
+function rafraichirReglages() {
+  const cible = cibleChoisie();
+  const mise = miseChoisie();
+  $("cible-libelle").textContent = "x" + (cible % 1 ? cible.toFixed(1) : cible);
+  const gain = $("gain-projete");
+  gain.textContent = (mise * cible).toFixed(0) + " EUR";
+  gain.classList.add("change");
+  clearTimeout(rafraichirReglages.minuterie);
+  rafraichirReglages.minuterie = setTimeout(() => gain.classList.remove("change"), 260);
+}
+
+// Un recalcul par reglage serait une requete par cran de curseur. On attend que
+// la main s'arrete, et on ignore les reponses depassees : sans ce jeton, une
+// requete lente arrivee apres une rapide afficherait un resultat perime.
+let jetonCombine = 0;
+
+function combineDifferee(delai = 260) {
+  rafraichirReglages();
+  clearTimeout(combineDifferee.minuterie);
+  combineDifferee.minuterie = setTimeout(afficherCombineDuJour, delai);
+}
+
+async function afficherCombineDuJour() {
+  const section = $("section-combine-jour");
+  const bloc = $("combine-jour-panneau");
+  const bouton = $("combine-jour");
+  const cible = cibleChoisie();
+  const mise = miseChoisie();
+  const jour = jourDuCombine();
+  const jeton = ++jetonCombine;
+  section.hidden = false;
+  montrerVue("combine-jour");
+  // Le contenu precedent reste a l'ecran, en respiration : le vider ferait
+  // sauter la page a chaque cran du curseur.
+  if (bloc.firstElementChild) bloc.classList.add("squelette");
+  else bloc.innerHTML = '<div class="note squelette">Calcul...</div>';
+  bouton.disabled = true;
+  try {
+    const reponse = await fetch(`/api/combine-du-jour?cible=${cible}`
+      + `&mise=${mise}&jour=${encodeURIComponent(jour)}`);
+    const c = await reponse.json();
+    if (jeton !== jetonCombine) return;      // une demande plus recente a suivi
+    bloc.classList.remove("squelette");
+    if (c.erreur) {
+      bloc.innerHTML = `<div class="verdict mauvais">${c.erreur}</div>`;
+      $("compte-combine-jour").textContent = "";
+      return;
+    }
+    const quand = c.jours_couverts.length === 1
+      ? libelleJour(c.jours_couverts[0] + "T12:00:00")
+      : `${c.jours_couverts.length} journees (${c.jours_couverts.join(", ")})`;
+    $("compte-combine-jour").textContent =
+      `— ${c.jambes.length} matchs, ${quand.toLowerCase()}`;
+    pastille("n-combine", c.jambes.length);
+
+    // Echelle logarithmique : une cote est multiplicative. En lineaire, une
+    // cote de 2 sur un objectif de 9 remplirait 22 % de la barre alors qu'elle
+    // represente le tiers du chemin en nombre de jambes a empiler.
+    const part = Math.max(0.02, Math.min(1,
+      Math.log(c.cote_totale) / Math.log(Math.max(c.cible, 1.01))));
+    const court = !c.objectif_atteint;
+    const a = c.annee;
+
+    bloc.innerHTML = `
+      <div class="combine-hero">
+        <div class="ligne">
+          <div class="trajet"><strong>${c.mise.toFixed(0)} EUR</strong> pour en gagner
+            <strong id="cj-gain">${c.gain.toFixed(2)}</strong> — ${quand}</div>
+          <div class="cote"><small>x</small><span id="cj-cote">0</span></div>
+        </div>
+        <div class="jauge-combine${court ? " court" : ""}"><i id="cj-jauge"></i>${
+          court ? '<span class="marqueur-max" id="cj-max" title="maximum atteignable ce jour-la"></span>' : ""
+        }</div>
+        <div class="jauge-legende">
+          <span>${c.jambes.length} match(s) empile(s)</span>
+          <span>objectif x${c.cible.toFixed(0)}</span>
+        </div>
+      </div>
+      ${court ? `<div class="verdict mauvais">
+        <strong>&#9888; Objectif x${c.cible.toFixed(0)} hors d'atteinte ${quand.toLowerCase()}.</strong>
+        Le maximum en empilant les ${c.candidats_du_jour} favori(s) eligible(s)
+        est <strong>x${c.cote_maximale.toFixed(2)}</strong>. Vise un gain plus
+        modeste, ou choisis une journee mieux fournie.</div>` : ""}
+      <div class="tuiles">
+        <div class="tuile"><div class="valeur" id="cj-proba">${pourcent(c.probabilite)}</div>
+          <div class="clef">Chances que tout passe</div></div>
+        <div class="tuile"><div class="valeur">1 sur ${Math.round(c.une_fois_sur)}</div>
+          <div class="clef">Frequence de reussite</div></div>
+        <div class="tuile"><div class="valeur">${pourcent(c.marge_payee)}</div>
+          <div class="clef">Marge payee aux bookmakers</div></div>
+        <div class="tuile"><div class="valeur">${signe(c.esperance)}</div>
+          <div class="clef">Esperance par pari</div></div>
+      </div>
+      <div class="jambes-grille">${c.jambes.map((j, index) => `
+        <div class="jambe-carte" style="--i:${index}">
+          <div class="duo"><span class="ligue">${j.championnat}</span>${j.dom} - ${j.ext}</div>
+          <div class="choix">${j.equipe}</div>
+          <div class="bas"><span>marche ${pourcent(j.p_marche)}</span>
+            <span class="prix">${j.cote.toFixed(2)}</span></div>
+          <div class="bas"><span>${j.bookmaker}</span></div>
+        </div>`).join("")}</div>
+      <div class="bilan perdante">
+        <div>Sa cote equitable serait <span class="chiffre">${c.cote_equitable.toFixed(2)}</span> ;
+          on t'en offre <span class="chiffre">${c.cote_totale.toFixed(2)}</span> —
+          soit <span class="chiffre">${pourcent(c.marge_payee)}</span> de marge payee
+          aux bookmakers. Chaque match ajoute la sienne, et elles se multiplient.</div>
+        <div class="comparaison">
+          Repete chaque jour pendant un an : ${a.engage.toFixed(0)} EUR engages,
+          ${a.retour_attendu.toFixed(0)} EUR attendus en retour, gagnant environ
+          ${Math.round(a.jours_gagnants)} jours sur ${a.jours}.
+          <br>L'alternative en pari simple — une seule selection cotee
+          ${c.cible.toFixed(0)} — est pire : ${signe(c.roi_pari_simple)} mesures sur
+          ${c.roi_pari_simple_n} paris, intervalle
+          [${signe(c.roi_pari_simple_ic[0])}, ${signe(c.roi_pari_simple_ic[1])}].
+          C'est la seule bande de cotes dont la perte soit statistiquement etablie.
+        </div>
+      </div>
+      <div class="note">
+        Probabilites issues du <strong>marche</strong>, pas du modele : le poids
+        mesure de ce dernier est nul. Independance supposee entre les matchs —
+        defendable ici, ce sont des rencontres differentes.
+        Choisi parmi ${c.candidats_du_jour} favori(s) en cache ; aucun credit
+        API n'a ete consomme.
+      </div>`;
+
+    const barre = $("cj-jauge");
+    void barre.offsetWidth;            // force un calcul, sinon pas de transition
+    barre.style.width = (part * 100) + "%";
+    if ($("cj-max")) $("cj-max").style.left = (part * 100) + "%";
+    compter($("cj-cote"), c.cote_totale, 2, "");
+    compter($("cj-gain"), c.gain, 2, "");
+    // Le maximum du jour, reporte sous le curseur : on voit d'un coup d'oeil
+    // jusqu'ou l'objectif peut monter avant de devenir hors d'atteinte.
+    const repere = $("cible-max");
+    repere.hidden = !c.cote_maximale;
+    if (c.cote_maximale) {
+      repere.textContent =
+        `max x${c.cote_maximale.toFixed(c.cote_maximale < 10 ? 1 : 0)}`;
+      // Borne a 4-96 % pour que le libelle reste dans le cadre aux extremes.
+      const place = Math.min(96, Math.max(4, coteVersCurseur(c.cote_maximale)));
+      repere.style.left = place + "%";
+      // Le repere passe devant la borne dont il s'approche : deux libelles
+      // superposes se lisent comme un seul nombre (« max x8500 »).
+      $("borne-bas").classList.toggle("effacee", place < 22);
+      $("borne-haut").classList.toggle("effacee", place > 78);
+    } else {
+      $("borne-bas").classList.remove("effacee");
+      $("borne-haut").classList.remove("effacee");
+    }
+  } catch (erreur) {
+    bloc.innerHTML = `<div class="verdict mauvais">${erreur.message}</div>`;
+  } finally {
+    bouton.disabled = false;
+  }
+}
+
+async function afficherApis() {
+  const reponse = await fetch("/api/apis");
+  const { services } = await reponse.json();
+  const corps = $("corps-apis");
+  corps.textContent = "";
+  for (const s of services) {
+    const tr = document.createElement("tr");
+    const reste = s.limite ? (s.restant || 0) / s.limite : 0;
+    const jauge = s.utilise_par_l_outil
+      ? `<span class="jauge ${reste < 0.2 ? "tendue" : ""}"><span
+           style="width:${Math.min(100, reste * 100)}%"></span></span>${s.restant}`
+      : "—";
+    const etat = !s.cle_configuree
+      ? `absente du .env (${s.variable})`
+      : (s.utilise_par_l_outil
+          ? `${s.appels} appel(s), ${s.cout_par_appel} credit(s) chacun`
+            + (s.fenetre ? ` — couvre ${s.fenetre.join(" et ")}` : "")
+          : "configuree, jamais appelee : rien d'exploitable sur son plan gratuit");
+    tr.innerHTML = `
+      <td>${s.libelle}</td>
+      <td>${s.cle_configuree ? "configuree" : "<strong>absente</strong>"}</td>
+      <td class="nombre">${s.limite} / ${s.periode}</td>
+      <td class="nombre">${s.utilise_par_l_outil ? s.consomme : "—"}</td>
+      <td class="nombre">${jauge}</td>
+      <td class="motif ${s.utilise_par_l_outil ? "" : "inutilisee"}">${etat}</td>`;
+    corps.appendChild(tr);
+  }
+}
+
+async function demarrer() {
+  const reponse = await fetch("/api/championnats");
+  const { championnats } = await reponse.json();
+  LIGUES = championnats;
+  const liste = $("championnat");
+  const dujour = document.createElement("option");
+  dujour.value = "@jour";
+  dujour.textContent = "Aujourd'hui — toutes ligues";
+  liste.appendChild(dujour);
+  const toutes = document.createElement("option");
+  toutes.value = "*";
+  toutes.textContent = "Toutes les ligues";
+  liste.appendChild(toutes);
+  // Un pays par groupe, dans l'ordre du serveur : c'est l'ordre hierarchique
+  // (Premier League avant Championship), pas l'alphabetique qui les melangerait.
+  const groupes = new Map();
+  for (const c of championnats) {
+    const pays = c.pays || "Autres";
+    if (!groupes.has(pays)) {
+      const groupe = document.createElement("optgroup");
+      groupe.label = pays;
+      liste.appendChild(groupe);
+      groupes.set(pays, groupe);
+    }
+    const option = document.createElement("option");
+    option.value = c.code;
+    option.textContent = `${c.nom} (${c.code})`
+      + (c.age_cotes_minutes === null ? " — pas de cotes" : "");
+    groupes.get(pays).appendChild(option);
+  }
+  const memoire = JSON.parse(localStorage.getItem("foot_edge") || "{}");
+  liste.value = memoire.code || "F1";
+  if (memoire.bankroll) $("bankroll").value = memoire.bankroll;
+  $("charger").addEventListener("click", () => demander(false));
+  $("rafraichir").addEventListener("click", () => demander(true));
+  $("combine-jour").addEventListener("click", () => afficherCombineDuJour());
+  // Le curseur ne declenche un calcul que quand la main s'arrete ; le libelle
+  // et le gain projete, eux, suivent chaque cran.
+  $("cible").addEventListener("input", () => combineDifferee());
+  $("mise").addEventListener("input", () => combineDifferee(420));
+  rafraichirReglages();
+  for (const onglet of document.querySelectorAll(".onglet")) {
+    onglet.addEventListener("click", () => montrerVue(onglet.dataset.vue));
+  }
+  // L'ombre n'apparait qu'une fois la barre decollee du haut : elle signale
+  // qu'il y a du contenu au-dessus, elle ne decore pas.
+  const navigation = document.querySelector(".nav-site");
+  addEventListener("scroll", () => {
+    navigation.classList.toggle("detachee", window.scrollY > 4);
+  }, { passive: true });
+  $("jour").addEventListener("change", filtrer);
+  $("bankroll").addEventListener("change", () => CHOISIES.size && calculerCombine());
+  afficherApis();
+  demander(false);
+}
+
+demarrer();
+</script>
+</body>
+</html>

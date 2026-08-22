@@ -1,0 +1,1140 @@
+#!/usr/bin/env python3
+"""Interface web de consultation : les matchs a venir et leurs estimations.
+
+Un serveur local ecrit avec la seule bibliotheque standard — TACHES.txt
+section 3 n'autorise aucune dependance web, et une page de consultation pour
+un utilisateur n'en demande pas. Il ecoute sur 127.0.0.1 : rien n'est expose
+au reseau.
+
+Deux caches, pour deux raisons differentes :
+  - le modele est entraine une fois par championnat puis garde en memoire,
+    sinon chaque rechargement couterait quelques secondes de calcul ;
+  - les cotes sont lues du cache disque et jamais rafraichies toutes seules,
+    parce qu'un rechargement de page ne doit pas consommer de credit API.
+    Le rafraichissement est un bouton, un geste explicite.
+
+    python web.py                 puis http://127.0.0.1:8000
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import re
+import threading
+import webbrowser
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+import pandas as pd
+
+import config
+from cli import charger_donnees, entrainer_modele
+from data import absences as absences_module
+from data import cotes as cotes_module
+from data import noms as noms_module
+from data import resultats as resultats_module
+from data import scores as scores_module
+from modele import annexes
+from modele import calibration
+from modele import inter_divisions as inter_module
+from paris import combine as combine_module
+from paris import confiance as confiance_module
+from paris import journal as journal_module
+from paris import performance as performance_module
+from paris import quotidien as quotidien_module
+from paris import valeur as valeur_module
+from paris import verdict as verdict_module
+
+_journal = logging.getLogger("foot_edge.web")
+
+HOTE = "127.0.0.1"
+PORT = 8000
+PAGE = Path(__file__).resolve().parent / "web" / "page.html"
+SAISONS = 4
+SOURCE = "buts"
+
+# La page groupe les matchs avec `toLocaleDateString` du navigateur, donc dans
+# le fuseau de la machine. Le serveur doit decouper ses journees dans le meme,
+# sinon un match a 22h30 UTC tombe un jour ici et le lendemain la-bas.
+_FUSEAU_LOCAL = datetime.now().astimezone().tzinfo
+
+
+def _jour_local(instant: Any) -> str:
+    """Date locale d'un instant, au format AAAA-MM-JJ."""
+    horodatage = pd.Timestamp(instant)
+    if horodatage.tzinfo is None:
+        horodatage = horodatage.tz_localize(timezone.utc)
+    return str(horodatage.tz_convert(_FUSEAU_LOCAL).date())
+
+
+def aujourdhui() -> str:
+    """La journee en cours, telle que la page la nomme « Aujourd'hui »."""
+    return _jour_local(datetime.now(timezone.utc))
+
+
+# --------------------------------------------------------------------------
+# Cache des modeles
+# --------------------------------------------------------------------------
+
+class Cache:
+    """Modeles entraines, gardes d'une requete a l'autre.
+
+    Le verrou serialise les entrainements : deux onglets ouverts en meme temps
+    ne doivent pas lancer deux fois le meme calcul de trois secondes.
+    """
+
+    def __init__(self) -> None:
+        self._verrou = threading.Lock()
+        self._modeles: dict[str, tuple[Any, Any]] = {}
+        self._annexes: dict[str, dict[str, Any]] = {}
+        self._inter: dict[str, tuple[Any, Any, Any] | None] = {}
+
+    def modele(self, championnat: str) -> tuple[Any, Any]:
+        with self._verrou:
+            if championnat not in self._modeles:
+                matchs, _ = charger_donnees(championnat, SAISONS, SOURCE)
+                if matchs.empty:
+                    raise ValueError(
+                        f"Aucune donnee pour {championnat}. Verifie ta connexion : "
+                        "les saisons deja telechargees restent utilisables hors ligne.")
+                self._modeles[championnat] = (
+                    matchs, entrainer_modele(matchs, SOURCE, championnat))
+                self._annexes[championnat] = _entrainer_annexes(matchs, championnat)
+            return self._modeles[championnat]
+
+    def annexes(self, championnat: str) -> dict[str, Any]:
+        """Modeles corners et cartons, entraines avec le modele principal.
+
+        Renvoie un dictionnaire eventuellement vide : un championnat sans
+        colonnes de corners ou de cartons doit afficher moins, pas echouer.
+        """
+        self.modele(championnat)
+        return self._annexes.get(championnat, {})
+
+    def inter_divisions(self, championnat: str) -> tuple[Any, Any, Any] | None:
+        """Modele commun aux divisions du pays, ou None s'il est impossible.
+
+        Entraine a la demande et jamais d'avance : il coute plus cher que le
+        modele d'un championnat (cinq divisions anglaises font 7800 matchs), et
+        la plupart des journees n'en ont aucun besoin. L'echec est memorise au
+        meme titre que la reussite, sinon chaque match de coupe d'un pays sans
+        deuxieme division relancerait le meme calcul pour rien.
+        """
+        with self._verrou:
+            if championnat not in self._inter:
+                try:
+                    modele, rapport = inter_module.entrainer(championnat, SAISONS)
+                    matchs = pd.concat(
+                        [resultats_module.charger(c, SAISONS) for c in rapport.divisions],
+                        ignore_index=True)
+                    self._inter[championnat] = (matchs, modele, rapport)
+                except (ValueError, KeyError) as erreur:
+                    _journal.info("Pas de modele inter-divisions pour %s : %s",
+                                  championnat, erreur)
+                    self._inter[championnat] = None
+            return self._inter[championnat]
+
+    def oublier(self, championnat: str | None = None) -> None:
+        with self._verrou:
+            if championnat:
+                self._modeles.pop(championnat, None)
+                self._annexes.pop(championnat, None)
+                self._inter.pop(championnat, None)
+            else:
+                self._modeles.clear()
+                self._annexes.clear()
+                self._inter.clear()
+
+
+def _entrainer_annexes(matchs, championnat: str) -> dict:
+    """Corners et cartons, chacun independamment du reste.
+
+    Un type indisponible n'empeche pas l'autre : football-data.co.uk ne remplit
+    pas ces colonnes partout, et une ligue sans corners doit garder ses cartons.
+    """
+    modeles: dict = {}
+    for type_compte in annexes.TYPES:
+        try:
+            modeles[type_compte] = annexes.entrainer(matchs, type_compte)
+        except (annexes.DonneesInsuffisantes, ValueError) as erreur:
+            _journal.info("Modele %s indisponible pour %s : %s",
+                          type_compte, championnat, erreur)
+    return modeles
+
+
+CACHE = Cache()
+
+
+# --------------------------------------------------------------------------
+# Donnees servies
+# --------------------------------------------------------------------------
+
+def _probabilites_de_marche(cotes) -> dict[tuple[str, str], dict[tuple[str, str], float]]:
+    """Probabilites du marche, marge retiree, indexees par match puis selection.
+
+    Sert a contredire le modele : sur les deux seuls marches que The Odds API
+    cote, un ecart important entre les deux camps est presque toujours une
+    information qui manque au modele, pas une occasion. Les autres marches
+    (double chance, clean sheet...) n'ont aucune cote et restent donc
+    invalidables — la page doit le dire plutot que de les presenter a egalite.
+    """
+    if cotes.empty:
+        return {}
+    try:
+        consensus = calibration.consensus(cotes)
+    except (ValueError, KeyError) as erreur:      # cotes trop partielles
+        _journal.info("Consensus de marche indisponible (%s) : "
+                      "les pronos seront affiches sans contre-expertise.", erreur)
+        return {}
+    par_match: dict[tuple[str, str], dict[tuple[str, str], float]] = {}
+    for ligne in consensus.itertuples():
+        par_match.setdefault((ligne.dom, ligne.ext), {})[
+            (ligne.marche, ligne.selection)] = float(ligne.p_marche)
+    return par_match
+
+
+class _Absences:
+    """Absences des jours concernes, un appel API par jour au maximum.
+
+    Une page de huit matchs ne doit pas declencher huit appels : le plan
+    gratuit n'en autorise que cent par jour, et un appel `/injuries?date=`
+    couvre deja toutes les ligues de cette date.
+    """
+
+    def __init__(self) -> None:
+        self._jours: dict[str, tuple[list, str, str]] = {}
+
+    def _jour(self, jour: str) -> tuple[list, str, str]:
+        if jour not in self._jours:
+            self._jours[jour] = absences_module.etat_du_jour(jour)
+        return self._jours[jour]
+
+    def du_match(self, date_match, dom: str, ext: str, equipes: list[str]) -> dict:
+        jour = str(date_match)[:10]
+        lignes, statut, explication = self._jour(jour)
+        par_equipe = absences_module.du_match(lignes, dom, ext, equipes)
+        return {
+            "statut": statut,
+            "explication": explication,
+            "jours_couverts": absences_module.jours_couverts(),
+            "dom": par_equipe.get(dom, []),
+            "ext": par_equipe.get(ext, []),
+        }
+
+
+class _Resultats:
+    """Scores de la saison en cours, pour confronter les pronos au reel.
+
+    Volontairement separe du cache de modeles : celui-ci fige l'historique au
+    demarrage du serveur, et ne verrait donc jamais un match joue depuis. Ici on
+    relit, avec le TTL de six heures de football-data — un match termine il y a
+    une heure peut donc ne pas encore etre publie, et c'est dit plutot que
+    devine.
+    """
+
+    def __init__(self) -> None:
+        self._par_ligue: dict[str, dict[tuple[str, str], dict]] = {}
+        self._par_jour: dict[tuple, dict[tuple[str, str], dict]] = {}
+
+    def _ligue(self, championnat: str) -> dict[tuple[str, str], dict]:
+        if championnat not in self._par_ligue:
+            index: dict[tuple[str, str], dict] = {}
+            try:
+                matchs = resultats_module.charger(championnat, 1)
+            except Exception as erreur:               # jamais au prix de la page
+                _journal.info("Resultats %s indisponibles : %s", championnat, erreur)
+                matchs = None
+            if matchs is not None and not matchs.empty:
+                for ligne in matchs.itertuples():
+                    index[(str(ligne.dom), str(ligne.ext))] = {
+                        "date": str(getattr(ligne, "date", "")),
+                        "buts_dom": getattr(ligne, "buts_dom", None),
+                        "buts_ext": getattr(ligne, "buts_ext", None),
+                        "corners_dom": getattr(ligne, "corners_dom", None),
+                        "corners_ext": getattr(ligne, "corners_ext", None),
+                        "jaunes_dom": getattr(ligne, "jaunes_dom", None),
+                        "jaunes_ext": getattr(ligne, "jaunes_ext", None),
+                    }
+            self._par_ligue[championnat] = index
+        return self._par_ligue[championnat]
+
+    def _du_jour(self, jour: str, equipes: list[str]) -> dict[tuple[str, str], dict]:
+        """Scores API-Football d'une date, un appel pour toutes les ligues."""
+        cle = (jour, id(equipes))
+        if cle not in self._par_jour:
+            self._par_jour[cle] = scores_module.du_jour(jour, equipes)
+        return self._par_jour[cle]
+
+    def du_match(self, championnat: str, dom: str, ext: str,
+                 equipes: list[str] | None = None,
+                 jour: str | None = None) -> dict | None:
+        """Le score d'une rencontre, ou None si personne ne l'a encore publie.
+
+        Deux sources, dans cet ordre :
+          1. football-data, qui porte aussi corners et cartons — donc les seuls
+             verdicts possibles sur les comptes annexes ;
+          2. API-Football, qui n'a que les buts mais les a le soir meme. Sans
+             elle, un match joue disparait du flux de cotes bien avant que
+             football-data ne publie, et aucun prono ne serait jamais confronte.
+
+        L'appariement se fait sur les deux equipes, pas sur la date : le flux de
+        cotes donne une heure de coup d'envoi et football-data une date de
+        journee, qui divergent d'un fuseau. Deux equipes ne se rencontrent au
+        plus qu'une fois par phase, l'ambiguite est negligeable.
+        """
+        publie = self._ligue(championnat).get((dom, ext))
+        if publie is not None:
+            return {**publie, "source": "football_data"}
+        if jour and equipes:
+            entree = self._du_jour(jour, equipes).get((dom, ext))
+            if entree is None:
+                return None
+            # Les corners et les cartons demandent un appel de plus, par
+            # rencontre. On ne le fait que pour les matchs reellement affiches,
+            # et le resultat est garde definitivement : un match joue ne change
+            # plus. Douze rencontres par jour sur un quota de cent.
+            return scores_module.comptes(entree, dom, ext)
+        return None
+
+
+def _verdicts_du_match(match: dict, resultat: dict) -> dict:
+    """Rejoue chaque prono affiche sur cette carte contre le score final."""
+    rendus: dict[str, Any] = {}
+    verdicts: list[str] = []
+
+    prono = match.get("prono_1n2")
+    if prono:
+        rendus["prono_1n2"] = verdict_module.verifier("1N2", prono["selection"], resultat)
+        # Un prono a 80 % qui echoue n'est pas une faute du modele : il DOIT
+        # echouer une fois sur cinq. Sans ce rappel, une pastille rouge se lit
+        # comme une erreur et une verte comme une preuve.
+        rendus["nuance"] = verdict_module.nuance(
+            prono.get("p_modele"), rendus["prono_1n2"])
+        verdicts.append(rendus["prono_1n2"])
+        couverture = prono.get("couverture")
+        if couverture:
+            rendus["couverture"] = verdict_module.verifier(
+                "double chance", couverture["selection"], resultat)
+            verdicts.append(rendus["couverture"])
+
+    rendus["annexes"] = []
+    for annexe in match.get("pronos_annexes", []):
+        rendus["annexes"].append(verdict_module.verifier_compte(
+            annexe.get("libelle_compte", ""), annexe.get("selection", ""),
+            annexe.get("ligne", 0), resultat))
+    verdicts += rendus["annexes"]
+
+    # Le bilan s'arrete ici, AVANT le catalogue complet des marches. Celui-ci
+    # contient des paires complementaires — plus et moins de chaque seuil, les
+    # trois issues du 1N2 — dont exactement la moitie est juste quel que soit le
+    # score. Les compter donnerait un taux de reussite d'environ 50 % sur tous
+    # les matchs, ce qui ressemblerait a une mesure et n'en serait pas une.
+    rendus["bilan"] = verdict_module.bilan(verdicts)
+
+    # Le detail du catalogue reste fourni, ligne par ligne, pour le tableau des
+    # marches — mais il ne pese pas dans le compte affiche.
+    rendus["pronos"] = [
+        verdict_module.verifier(p["marche"], p["selection"], resultat)
+        for p in match.get("pronos", [])]
+    return rendus
+
+
+def _reserves_absences(absences: dict, dom: str, ext: str) -> list[str]:
+    """Une equipe trop amputee rend le modele moins pertinent, sans le corriger.
+
+    Le modele est entraine sur des matchs joues par des effectifs complets.
+    Quand trois titulaires manquent, il decrit une equipe qui n'entrera pas sur
+    le terrain. On le dit ; on ne bricole pas la probabilite pour autant, faute
+    d'une estimation de ce que chaque joueur apporte.
+    """
+    if absences.get("statut") != absences_module.DISPONIBILITE_OK:
+        return []
+    reserves = []
+    for cle, equipe in (("dom", dom), ("ext", ext)):
+        liste = absences.get(cle) or []
+        if len(liste) >= config.SEUIL_ABSENCES_NOTABLES:
+            suspendus = sum(1 for a in liste if a["suspension"])
+            detail = f"{len(liste)} absent(s)"
+            if suspendus:
+                detail += f" dont {suspendus} suspendu(s)"
+            reserves.append(
+                f"{equipe} : {detail} — le modele decrit un effectif complet, "
+                "pas celui qui jouera")
+    return reserves
+
+
+def _pronos_annexes(modeles: dict, dom: str, ext: str,
+                    reserves: list[str], championnat: str = "") -> list[dict]:
+    """Un prono par compte annexe disponible, pour ce match.
+
+    Une equipe absente de ce modele-la (promue, ou match d'une saison ou la
+    colonne manquait) fait sauter ce seul prono, pas la carte du match.
+    """
+    resultats = []
+    for type_compte, modele in modeles.items():
+        try:
+            prediction = modele.predire(dom, ext)
+        except KeyError as erreur:
+            _journal.info("Prono %s impossible sur %s - %s : %s",
+                          type_compte, dom, ext, erreur)
+            continue
+        prediction["championnat"] = championnat.upper()
+        prono = confiance_module.prono_comptes(prediction, dom, ext, reserves)
+        if prono:
+            prono["validation"] = _validation_annexe(championnat, type_compte)
+            resultats.append(prono)
+    return resultats
+
+
+def _validation_annexe(championnat: str, type_compte: str) -> dict | None:
+    """La contre-expertise de ce modele, si elle a ete calculee.
+
+    Aucun bookmaker ne cote ces marches : cette validation contre les comptes
+    reels est la seule chose qui puisse remplacer l'etiquette « non verifiable »
+    par un chiffre. Elle est produite par `cli.py valider-annexes`, jamais ici.
+    """
+    validation = annexes.charger_validation(championnat, type_compte)
+    if validation is None:
+        return None
+    return {
+        "matchs": validation.nb_matchs,
+        "ecart_calibration_max": validation.ecart_calibration_max,
+        "biais": validation.biais, "biais_ic": validation.biais_ic,
+        "biais_significatif": validation.biais_significatif,
+        "dispersion": validation.dispersion,
+        "bat_la_moyenne_de_ligue": validation.bat_la_moyenne_de_ligue,
+        "calibration": validation.calibration,
+        "calcule_le": validation.calcule_le,
+    }
+
+
+def _stats_supplementaires(prediction: dict) -> dict:
+    """Les statistiques que le modele calcule deja et que la page jetait.
+
+    `matrice_scores` produit bien plus que le 1N2 : buts attendus par equipe,
+    cages inviolees, scores exacts, handicaps asiatiques. Tout etait calcule a
+    chaque requete puis ecarte. Les cles absentes sont tolerees pour la meme
+    raison que dans paris/confiance.py : un modele plus pauvre doit degrader
+    l'affichage, pas le faire echouer.
+    """
+    buts = prediction.get("buts_attendus", {})
+    return {
+        "buts_dom": buts.get("dom"), "buts_ext": buts.get("ext"),
+        "clean_sheet": prediction.get("clean_sheet"),
+        "scores_probables": prediction.get("scores_probables", [])[:6],
+        "handicaps": prediction.get("handicap_asiatique"),
+    }
+
+
+def affiches(championnat: str,
+             jour: str | None = None) -> tuple[list[dict], list[dict], float | None]:
+    """Matchs a venir du flux de cotes, avec les estimations du modele.
+
+    Renvoie aussi ceux qu'on a du ecarter. Une equipe promue n'a pas d'
+    historique dans le championnat charge : le modele ne peut rien en dire, et
+    la page doit le dire plutot que d'afficher sept matchs sur neuf sans un mot.
+
+    `jour` (AAAA-MM-JJ local) restreint a une seule journee. Le filtre est
+    applique avant `predire` : sur une vue du jour, calculer les huit matchs de
+    la semaine pour n'en montrer qu'un serait payer huit fois le meme prix.
+    """
+    matchs_charges, modele = CACHE.modele(championnat)
+    modeles_annexes = CACHE.annexes(championnat)
+    comptes = resultats_module.nb_matchs_par_equipe(matchs_charges)
+    cotes, age = cotes_module.lire_cache(championnat)
+    marche_devigge = _probabilites_de_marche(cotes)
+    poids_modele = calibration.poids_melange(championnat)
+    absences_cache = _Absences()
+    resultats_cache = _Resultats()
+    maintenant = datetime.now(timezone.utc)
+    lignes, ecartes = [], []
+    for ligne in cotes_module.matchs_a_venir(cotes).itertuples():
+        if jour is not None and _jour_local(ligne.date) != jour:
+            continue
+        dom = noms_module.resoudre_vers(ligne.dom, modele.equipes)
+        ext = noms_module.resoudre_vers(ligne.ext, modele.equipes)
+        modele_du_match, comptes_du_match, inter = modele, comptes, None
+        if dom is None or ext is None:
+            # Un adversaire d'une autre division — un match de coupe. Le modele
+            # du pays le connait peut-etre ; il n'est entraine que maintenant.
+            secours = CACHE.inter_divisions(championnat)
+            if secours is not None:
+                matchs_pays, modele_pays, rapport = secours
+                dom_pays = noms_module.resoudre_vers(ligne.dom, modele_pays.equipes)
+                ext_pays = noms_module.resoudre_vers(ligne.ext, modele_pays.equipes)
+                if dom_pays and ext_pays and dom_pays != ext_pays:
+                    dom, ext = dom_pays, ext_pays
+                    modele_du_match = modele_pays
+                    comptes_du_match = resultats_module.nb_matchs_par_equipe(matchs_pays)
+                    inter = {"divisions": list(rapport.divisions),
+                             "matchs": rapport.nb_matchs,
+                             "equipes": rapport.nb_equipes,
+                             "ponts": dict(rapport.ponts)}
+        if dom is None or ext is None or dom == ext:
+            ecartes.append({
+                "date": str(ligne.date), "dom": ligne.dom, "ext": ligne.ext,
+                "inconnues": [n for n, r in ((ligne.dom, dom), (ligne.ext, ext))
+                              if r is None]})
+            continue
+        p = modele_du_match.predire(dom, ext)
+        detail = cotes_module.par_bookmaker(cotes, ligne.date, ligne.dom, ligne.ext)
+        peu_de_donnees = [
+            {"equipe": e, "matchs": comptes_du_match.get(e, 0)} for e in (dom, ext)
+            if comptes_du_match.get(e, 0) < config.MIN_MATCHS_ESTIMATION_FIABLE]
+        # Une equipe sans historique suffisant discredite TOUS les marches du
+        # match, pas seulement le 1N2 : la reserve est portee par chaque prono.
+        reserves = [f"{e['equipe']} n'a que {e['matchs']} match(s) dans l'historique charge"
+                    for e in peu_de_donnees]
+        absences = absences_cache.du_match(ligne.date, dom, ext, modele_du_match.equipes)
+        reserves += _reserves_absences(absences, dom, ext)
+        if inter is not None:
+            reserves.append(
+                f"estimation inter-divisions ({'+'.join(inter['divisions'])}) : "
+                "ni la calibration ni le ROI mesures sur ce championnat ne "
+                "s'appliquent a ce match — ils n'ont ete etablis que sur des "
+                "rencontres d'une seule division")
+        p_marche = marche_devigge.get((ligne.dom, ligne.ext), {})
+        meilleures = cotes_module.meilleures_cotes(detail)
+        pronos = confiance_module.lister(p, dom, ext, p_marche, reserves)
+        lignes.append({
+            "date": str(ligne.date), "dom": dom, "ext": ext,
+            "bookmakers": int(ligne.nb_bookmakers),
+            "detail_bookmakers": detail,
+            "meilleures_cotes": meilleures,
+            "prono_1n2": confiance_module.prono_1n2(
+                p, dom, ext, p_marche, meilleures, reserves, poids_modele),
+            "pronos_annexes": [] if inter is not None else _pronos_annexes(
+                modeles_annexes, dom, ext, reserves, championnat),
+            "inter_divisions": inter,
+            "absences": absences,
+            "1": p["1N2"]["1"], "N": p["1N2"]["N"], "2": p["1N2"]["2"],
+            "plus25": p["totaux"]["plus_2.5"], "btts": p["btts"]["oui"],
+            "buts": p["buts_attendus"]["total"],
+            **_stats_supplementaires(p),
+            "pronos": confiance_module.en_dictionnaires(pronos),
+            "plus_surs": confiance_module.en_dictionnaires(
+                confiance_module.les_plus_surs(pronos)),
+            "peu_de_donnees": peu_de_donnees,
+        })
+        # Le match est-il joue, et sait-on ce qu'il a donne ?
+        coup_envoi = pd.Timestamp(ligne.date)
+        if coup_envoi.tzinfo is None:
+            coup_envoi = coup_envoi.tz_localize(timezone.utc)
+        if coup_envoi < maintenant:
+            # `modele_du_match.equipes` et non celles du championnat : sur un
+            # match de coupe, c'est le modele inter-divisions qui a resolu les
+            # noms, et la cle doit etre la meme des deux cotes.
+            resultat = resultats_cache.du_match(
+                championnat, dom, ext, modele_du_match.equipes,
+                _jour_local(ligne.date))
+            lignes[-1]["joue"] = True
+            if resultat is None:
+                # Le TTL de six heures de football-data peut retarder la
+                # publication : dire « pas encore » vaut mieux que se taire.
+                lignes[-1]["resultat"] = None
+            else:
+                # `.get` et non `[...]` : une source de resultats sans colonne
+                # de corners ne doit pas faire tomber la carte du match.
+                lignes[-1]["resultat"] = {
+                    cle: resultat.get(cle) for cle in (
+                        "buts_dom", "buts_ext", "corners_dom", "corners_ext",
+                        "jaunes_dom", "jaunes_ext")
+                } | {"issue": verdict_module.issue_1n2(resultat),
+                     "source": resultat.get("source", "football_data")}
+                lignes[-1]["verdicts"] = _verdicts_du_match(lignes[-1], resultat)
+    return lignes, ecartes, age
+
+
+def opportunites(championnat: str, bankroll: float, forcer: bool = False,
+                 jour: str | None = None) -> tuple[list[dict], float | None]:
+    """Selections ou le marche semble decale. `forcer` consomme des credits."""
+    _, modele = CACHE.modele(championnat)
+    if forcer:
+        cotes, age = cotes_module.recuperer(championnat, forcer=True), 0.0
+    else:
+        cotes, age = cotes_module.lire_cache(championnat)
+    if not cotes.empty and jour is not None:
+        cotes = cotes[cotes["date"].map(_jour_local) == jour]
+    if cotes.empty:
+        return [], age
+    return [{
+        "date": str(o.date), "dom": o.dom, "ext": o.ext, "marche": o.marche,
+        "selection": o.selection, "cote": o.cote, "bookmaker": o.bookmaker,
+        "p_modele": o.p_modele, "p_marche": o.p_marche, "p_finale": o.p_finale,
+        "ecart": o.ecart_modele_marche, "esperance": o.esperance, "mise": o.mise,
+        "retenue": bool(o.recommandee), "alerte": o.alerte or "",
+        "motifs": list(o.raisons_rejet),
+    } for o in valeur_module.detecter(
+        cotes, modele, bankroll,
+        a_melange=calibration.poids_melange(championnat))], age
+
+
+def _performance_mesuree(championnat: str) -> dict | None:
+    """Ce que la regle a reellement rapporte sur l'historique de ce championnat.
+
+    Jamais calcule ici : la mesure demande un walk-forward de plusieurs minutes.
+    Elle est produite par `python cli.py performance -c XX` et relue telle
+    quelle. Absente, la page le dit plutot que d'afficher la seule esperance
+    annoncee, qui est la moitie flatteuse de l'information.
+    """
+    mesure = performance_module.charger(championnat)
+    if mesure is None:
+        return None
+    return {
+        "roi": mesure.roi, "roi_bas": mesure.roi_bas, "roi_haut": mesure.roi_haut,
+        "esperance_annoncee": mesure.esperance_annoncee,
+        "nb_paris": mesure.nb_paris, "matchs": mesure.matchs,
+        "roi_favori_marche": mesure.roi_favori_marche,
+        "roi_tout_parier": mesure.roi_tout_parier,
+        "significatif": mesure.significatif, "verdict": mesure.verdict,
+        "calcule_le": mesure.calcule_le,
+    }
+
+
+# Ce que sait faire CE processus. `web/page.html` est relu a chaque requete,
+# donc l'interface est toujours a jour ; `web.py`, lui, est charge une seule fois
+# au demarrage. Une page recente devant un serveur ancien affiche donc des
+# libelles neufs sur des donnees qui n'existent pas. Ce drapeau permet de le
+# dire au lieu de laisser croire a une absence de donnee.
+CAPACITES = ("resultats_football_data", "resultats_api_football", "verdicts")
+
+
+def etat_du_jour(championnat: str, bankroll: float, forcer: bool = False) -> dict:
+    """Tout ce que la page affiche, en un seul aller-retour."""
+    lignes, age = opportunites(championnat, bankroll, forcer)
+    matchs, ecartes, _ = affiches(championnat)
+    poids = calibration.poids_melange(championnat)
+    return {
+        "performance": _performance_mesuree(championnat),
+        "poids_modele": poids,
+        "poids_modele_defaut": config.POIDS_MELANGE_DEFAUT,
+        "poids_mesure": calibration.charger_poids_melange(championnat) is not None,
+        "championnat": championnat,
+        "nom": config.nom_championnat(championnat),
+        "matchs": matchs,
+        "ecartes": ecartes,
+        "opportunites": lignes,
+        "age_cotes_minutes": round(age / 60, 1) if age is not None else None,
+        "quota": cotes_module.message_quota().splitlines()[0],
+        "bankroll": bankroll,
+        "exposition": journal_module.exposition(),
+        "plafond_mise": round(bankroll * config.PLAFOND_MISE_BANKROLL, 2),
+        "part_plafond": config.PLAFOND_MISE_BANKROLL,
+        "seuil_alerte_jour": config.SEUIL_ALERTE_EXPOSITION_JOUR,
+        "saisons": SAISONS,
+        "genere": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "avertissement": config.AVERTISSEMENT_LEGAL,
+        "capacites": list(CAPACITES),
+    }
+
+
+def ligues_du_jour(jour: str) -> list[str]:
+    """Les championnats dont le cache contient au moins un match ce jour-la.
+
+    Ne lit que le cache disque : aucun modele n'est entraine ici. C'est ce qui
+    rend la vue du jour tenable. Un entrainement coute quelques secondes, et un
+    jour de semaine la moitie des ligues ne joue pas — les charger toutes pour
+    n'en afficher que huit matchs serait payer dix-sept fois un calcul inutile.
+    """
+    codes = []
+    for code in config.CHAMPIONNATS_AVEC_COTES:
+        cotes, _ = cotes_module.lire_cache(code)
+        if not cotes.empty and (cotes["date"].map(_jour_local) == jour).any():
+            codes.append(code)
+    return codes
+
+
+def etat_aujourdhui(bankroll: float, jour: str | None = None,
+                    forcer: bool = False) -> dict:
+    """Les matchs d'une seule journee, toutes ligues confondues.
+
+    Meme forme que `etat_du_jour` pour que la page les affiche par le meme
+    chemin, a trois differences pres, toutes assumees :
+      - `performance` et `poids_modele` sont nuls, parce qu'ils sont mesures
+        par championnat : les cumuler melangerait des echantillons distincts ;
+      - `age_cotes_minutes` porte le cache le PLUS VIEUX des ligues lues, seul
+        chiffre honnete quand on en agrege plusieurs ;
+      - une ligue qui echoue n'interrompt pas les autres : elle est reportee
+        dans `ligues`, et la page affiche les ligues qui ont repondu.
+
+    `forcer` interroge l'API pour les ligues qui jouent aujourd'hui, a deux
+    credits chacune. Lesquelles jouent est decide sur le cache actuel : une
+    ligue dont le cache est trop vieux pour connaitre le match de ce soir ne
+    sera pas rafraichie. Il faut alors passer par « Toutes les ligues ».
+    """
+    jour = jour or aujourdhui()
+    codes = ligues_du_jour(jour)
+    matchs: list[dict] = []
+    lignes: list[dict] = []
+    ecartes: list[dict] = []
+    ligues: list[dict] = []
+    ages: list[float] = []
+
+    for code in codes:
+        nom = config.nom_championnat(code)
+        try:
+            opportunites_ligue, age = opportunites(
+                code, bankroll, forcer=forcer, jour=jour)
+            matchs_ligue, ecartes_ligue, _ = affiches(code, jour=jour)
+        except Exception as erreur:                   # une ligue muette, pas la page
+            _journal.warning("Vue du jour, %s ecarte : %s", code, erreur)
+            ligues.append({"code": code, "nom": nom, "matchs": 0,
+                           "erreur": _message_erreur(erreur)})
+            continue
+        for match in matchs_ligue:
+            match["ligue"] = code
+        for opportunite in opportunites_ligue:
+            opportunite["ligue"] = code
+        matchs += matchs_ligue
+        lignes += opportunites_ligue
+        ecartes += ecartes_ligue
+        ligues.append({"code": code, "nom": nom,
+                       "matchs": len(matchs_ligue), "erreur": None})
+        if age is not None:
+            ages.append(age)
+
+    matchs.sort(key=lambda m: m["date"])
+    lignes.sort(key=lambda o: o["esperance"], reverse=True)
+    return {
+        "performance": None,
+        "poids_modele": None,
+        "poids_modele_defaut": config.POIDS_MELANGE_DEFAUT,
+        "poids_mesure": False,
+        "championnat": "@jour",
+        "nom": f"tous les matchs du {jour}",
+        "jour": jour,
+        "multi": True,
+        "ligues": ligues,
+        "matchs": matchs,
+        "ecartes": ecartes,
+        "opportunites": lignes,
+        "age_cotes_minutes": round(max(ages) / 60, 1) if ages else None,
+        "quota": cotes_module.message_quota().splitlines()[0],
+        "bankroll": bankroll,
+        "exposition": journal_module.exposition(),
+        "plafond_mise": round(bankroll * config.PLAFOND_MISE_BANKROLL, 2),
+        "part_plafond": config.PLAFOND_MISE_BANKROLL,
+        "seuil_alerte_jour": config.SEUIL_ALERTE_EXPOSITION_JOUR,
+        "saisons": SAISONS,
+        "genere": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "avertissement": config.AVERTISSEMENT_LEGAL,
+        "capacites": list(CAPACITES),
+    }
+
+
+class ModeleParLigue:
+    """Aiguille chaque match vers le modele de son championnat.
+
+    Le module de combine ne demande qu'une chose a un modele :
+    `matrice_scores(dom, ext)`. Un combine peut donc melanger les
+    championnats sans que le calcul ait a le savoir.
+    """
+
+    def __init__(self, jambes: list[dict], defaut: str) -> None:
+        self._modeles: dict[str, Any] = {}
+        self._ligue: dict[tuple[str, str], str] = {}
+        for jambe in jambes:
+            ligue = (jambe.get("ligue") or defaut).upper()
+            if ligue not in config.CHAMPIONNATS:
+                raise ValueError(f"Championnat inconnu dans le combine : {ligue}")
+            self._ligue[(jambe["dom"], jambe["ext"])] = ligue
+            if ligue not in self._modeles:
+                self._modeles[ligue] = CACHE.modele(ligue)[1]
+
+    def matrice_scores(self, dom: str, ext: str, taille: int | None = None):
+        return self._modeles[self._ligue[(dom, ext)]].matrice_scores(dom, ext)
+
+
+def evaluer_combine(championnat: str, bankroll: float, jambes: list[dict]) -> dict:
+    """Un combine, avec la probabilite jointe exacte et ses motifs de rejet.
+
+    Les jambes peuvent venir de championnats differents : chacune porte le sien.
+    """
+    modele = ModeleParLigue(jambes, championnat)
+    resultat = combine_module.evaluer(
+        modele,
+        [combine_module.Jambe(j["dom"], j["ext"], j["marche"], j["selection"],
+                              float(j["cote"]),
+                              None if j.get("p_finale") is None else float(j["p_finale"]))
+         for j in jambes],
+        bankroll)
+    return {
+        "jambes": [{"dom": j.dom, "ext": j.ext, "marche": j.marche,
+                    "selection": j.selection, "cote": j.cote, "p_modele": p}
+                   for j, p in zip(resultat.jambes, resultat.p_par_jambe)],
+        "cote_totale": resultat.cote_totale,
+        "p_modele": resultat.p_modele,
+        "p_modele_seul": resultat.p_modele_seul,
+        "recale": all(j.p_finale is not None for j in resultat.jambes),
+        "p_independance": resultat.p_independance,
+        "cote_equitable": resultat.cote_equitable,
+        "esperance": resultat.esperance,
+        "mise": resultat.mise,
+        "gain_si_tout_passe": round(resultat.mise * resultat.cote_totale, 2),
+        "retenu": resultat.retenu,
+        "correlations": resultat.correlations,
+        "motifs": resultat.motifs,
+    }
+
+
+def etat_des_apis() -> list[dict]:
+    """Les trois services, avec leur consommation reelle.
+
+    Deux services sont reellement interroges et ont donc un compteur : The Odds
+    API pour les cotes, API-Football pour les absences. football-data.org n'en a
+    pas, et c'est mesure plutot que suppose : sur son plan gratuit les arbitres
+    ne sont jamais renseignes, les cotes sont derriere un paquet payant, et son
+    classement est deja couvert, en plus riche, par les CSV football-data.co.uk.
+    Lui inventer un compteur laisserait croire a un usage qui n'existe pas.
+    """
+    compteur = cotes_module.lire_compteur()
+    consomme = cotes_module.credits_consommes(compteur)
+    compteur_absences = absences_module.lire_compteur()
+    lignes = []
+    for service in config.services():
+        ligne = {**service, "consomme": None, "restant": None,
+                 "appels": None, "dernier_appel": None, "annonce_par_l_api": None}
+        if service["nom"] == "api_football":
+            # Quota quotidien, pas mensuel : un appel couvre toutes les ligues
+            # d'une date, donc deux suffisent a couvrir la fenetre autorisee.
+            ligne.update(
+                consomme=compteur_absences["appels"],
+                restant=max(0, int(service["limite"]) - compteur_absences["appels"]),
+                appels=compteur_absences["appels"],
+                dernier_appel=compteur_absences.get("dernier_appel"),
+                annonce_par_l_api=compteur_absences.get("restant_api"),
+                cout_par_appel=1,
+                fenetre=absences_module.jours_couverts())
+        elif service["nom"] == "odds":
+            ligne.update(
+                consomme=consomme,
+                restant=max(0, int(service["limite"]) - consomme),
+                appels=compteur["appels"],
+                dernier_appel=compteur.get("dernier_appel"),
+                annonce_par_l_api=compteur.get("restant_api"),
+                cout_par_appel=cotes_module.COUT_CREDITS_PAR_APPEL,
+                seuil_alerte=config.SEUIL_AVERTISSEMENT_QUOTA)
+        lignes.append(ligne)
+    return lignes
+
+
+def _libelle_jour(jour: str | None) -> str:
+    """« le 2026-08-21 » ou « dans les cotes en cache », selon qu'un jour est vise."""
+    return f"le {jour}" if jour else "dans les cotes en cache"
+
+
+def _cote_maximale(candidats: list) -> float:
+    """La cote qu'on obtiendrait en empilant TOUS les candidats disponibles.
+
+    C'est le plafond du jour. Quand l'objectif demande le depasse, c'est ce
+    chiffre-la qu'il faut montrer : il dit ou s'arrete le possible, la ou un
+    simple « impossible » laisserait croire a un defaut de l'outil.
+    """
+    plafond = 1.0
+    for selection in sorted(candidats, key=lambda s: s.p_marche, reverse=True)[:15]:
+        plafond *= selection.cote
+    return round(plafond, 2)
+
+
+def combine_du_jour(cible: float = 9.0, mise: float = 10.0,
+                    jour: str | None = None) -> dict:
+    """Le combine de favoris qui atteint l'objectif de gain demande.
+
+    Lit uniquement les cotes en cache : cliquer ce bouton ne doit jamais
+    consommer de credit API. Les probabilites sont celles du marche, jamais
+    celles du modele — le poids mesure de ce dernier est nul.
+
+    `jour` (AAAA-MM-JJ local) restreint le combine a une seule journee. Sans
+    lui, le combine empile ce qu'il trouve dans tout le cache — jusqu'a trois
+    journees differentes en pratique, ce qui contredit son nom. La reponse
+    porte donc toujours `jours_couverts` : la page doit pouvoir dire sur quoi
+    l'utilisateur parie reellement.
+    """
+    par_championnat = {}
+    for code in config.CHAMPIONNATS_AVEC_COTES:
+        cotes, age = cotes_module.lire_cache(code)
+        if not cotes.empty and age is not None:
+            par_championnat[code] = cotes
+    if not par_championnat:
+        return {"erreur": "Aucune cote en cache. Utilise « Rafraichir les cotes »."}
+
+    # Seuil abaisse et prime de prix non exigee : ici on cherche a EMPILER des
+    # favoris, pas a trouver la meilleure affaire du jour. Ce sont deux
+    # questions differentes et elles n'ont pas les memes filtres.
+    candidats = quotidien_module.du_jour(par_championnat, seuil=0.62, prime_minimale=0.0)
+    if jour is not None:
+        # Le decoupage des journees est celui de `_jour_local`, donc le meme que
+        # celui du navigateur : un match a 22h30 UTC ne doit pas tomber dans deux
+        # jours differents selon le cote.
+        candidats = [c for c in candidats if _jour_local(c.date) == jour]
+    if not candidats:
+        return {"erreur": f"Aucun favori eligible {_libelle_jour(jour)}. "
+                          "Choisis un autre jour, ou rafraichis les cotes.",
+                "jour": jour}
+
+    # `au_mieux` : une journee ordinaire n'offre que deux ou trois favoris. Rendre
+    # le meilleur empilement possible informe ; refuser de repondre ressemblerait
+    # a une panne.
+    combine = quotidien_module.combine_vers(
+        candidats, cible=cible, mise=mise, au_mieux=True)
+    if combine is None:
+        return {"erreur": f"Impossible d'atteindre x{cible:.0f} avec les "
+                          f"{len(candidats)} favori(s) en cache sans depasser 15 matchs. "
+                          "Rafraichis les cotes, ou vise un gain plus modeste.",
+                "jour": jour}
+
+    annee = combine.sur_une_annee()
+    jours_couverts = sorted({_jour_local(j.date) for j in combine.jambes})
+    return {
+        "jour": jour,
+        "jours_couverts": jours_couverts,
+        "objectif_atteint": combine.objectif_atteint,
+        "cote_maximale": _cote_maximale(candidats),
+        "candidats_du_jour": len(candidats),
+        "cible": cible, "mise": combine.mise, "gain": combine.gain,
+        "cote_totale": combine.cote_totale,
+        "probabilite": combine.probabilite,
+        "une_fois_sur": combine.une_fois_sur,
+        "cote_equitable": combine.cote_equitable,
+        "marge_payee": combine.marge_payee,
+        "esperance": combine.esperance,
+        "annee": annee,
+        "roi_pari_simple": quotidien_module.ROI_BANDE_LONGUE,
+        "roi_pari_simple_ic": list(quotidien_module.ROI_BANDE_LONGUE_IC),
+        "roi_pari_simple_n": quotidien_module.ROI_BANDE_LONGUE_N,
+        "candidats_disponibles": len(candidats),
+        "jambes": [{
+            "championnat": j.championnat, "dom": j.dom, "ext": j.ext,
+            "selection": j.selection, "equipe": j.equipe,
+            "p_marche": j.p_marche, "cote": j.cote, "bookmaker": j.bookmaker,
+            "date": str(j.date),
+        } for j in combine.jambes],
+    }
+
+
+def championnats() -> list[dict]:
+    """Les championnats, avec l'age de leurs cotes en cache.
+
+    L'age dit ce qui est consultable sans depenser un credit. La page s'en sert
+    pour n'interroger que les ligues qui ont deja des cotes : entrainer un
+    modele pour une ligue dont on n'a aucune cote ne servirait a rien.
+
+    Seules les ligues cotees par The Odds API sont proposees. Les autres (National
+    League, divisions ecossaises inferieures) n'existent ici que comme historique
+    du modele inter-divisions : les afficher promettrait des matchs qu'aucun
+    bookmaker ne cote et qu'on ne pourrait donc jamais montrer.
+    """
+    lignes = []
+    for code in config.CHAMPIONNATS_AVEC_COTES:
+        info = config.CHAMPIONNATS[code]
+        age = cotes_module.age_du_cache(code)
+        lignes.append({"code": code, "nom": info["nom"], "pays": info["pays"],
+                       "age_cotes_minutes": round(age / 60, 1) if age is not None else None})
+    return lignes
+
+
+# --------------------------------------------------------------------------
+# Serveur
+# --------------------------------------------------------------------------
+
+def _jour_demande(parametres: dict[str, list[str]]) -> tuple[str | None, str | None]:
+    """Le parametre `jour` valide, ou le message a renvoyer tel quel.
+
+    Un seul controle pour toutes les routes qui acceptent une journee : deux
+    validations paralleles finiraient par diverger, et l'une accepterait ce que
+    l'autre refuse.
+    """
+    jour = (parametres.get("jour", [""])[0] or "").strip() or None
+    if jour and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", jour):
+        return None, f"Jour illisible : {jour} (attendu AAAA-MM-JJ)."
+    return jour, None
+
+
+def _message_erreur(erreur: Exception) -> str:
+    """Message actionnable plutot qu'une trace, comme dans l'interface tkinter."""
+    if isinstance(erreur, config.CleApiManquante):
+        return str(erreur)
+    if isinstance(erreur, (ValueError, KeyError, RuntimeError)):
+        return str(erreur).strip("'")
+    if isinstance(erreur, OSError):
+        return ("Probleme reseau ou disque : " + str(erreur)
+                + " — les donnees deja telechargees restent utilisables.")
+    return f"{type(erreur).__name__} : {erreur}"
+
+
+class Gestionnaire(BaseHTTPRequestHandler):
+    """Quatre routes : la page, la liste des championnats, l'etat, le rafraichissement."""
+
+    server_version = "foot_edge"
+
+    def do_GET(self) -> None:
+        route = urlparse(self.path)
+        if route.path == "/":
+            self._page()
+        elif route.path == "/api/championnats":
+            self._json(200, {"championnats": championnats()})
+        elif route.path == "/api/apis":
+            self._json(200, {"services": etat_des_apis()})
+        elif route.path == "/api/combine-du-jour":
+            parametres = parse_qs(route.query)
+            try:
+                cible = float(parametres.get("cible", ["9"])[0])
+                mise = float(parametres.get("mise", ["10"])[0])
+            except ValueError:
+                self._json(400, {"erreur": "Objectif ou mise illisible."})
+                return
+            if not (1.5 <= cible <= 1000) or mise <= 0:
+                self._json(400, {"erreur": "Objectif hors bornes (1.5 a 1000)."})
+                return
+            jour, erreur = _jour_demande(parametres)
+            if erreur:
+                self._json(400, {"erreur": erreur})
+                return
+            try:
+                self._json(200, combine_du_jour(cible, mise, jour))
+            except Exception as souci:            # jamais une connexion coupee
+                _journal.warning("%s : %s", type(souci).__name__, souci)
+                self._json(500, {"erreur": _message_erreur(souci)})
+        elif route.path == "/api/jour":
+            self._etat(parse_qs(route.query), forcer=False)
+        elif route.path == "/api/aujourdhui":
+            self._aujourdhui(parse_qs(route.query))
+        else:
+            self._json(404, {"erreur": "Adresse inconnue."})
+
+    def do_POST(self) -> None:
+        route = urlparse(self.path)
+        if route.path == "/api/rafraichir":
+            self._etat(parse_qs(route.query), forcer=True)
+        elif route.path == "/api/aujourdhui":
+            self._aujourdhui(parse_qs(route.query), forcer=True)
+        elif route.path == "/api/combine":
+            self._combine(parse_qs(route.query))
+        else:
+            self._json(404, {"erreur": "Adresse inconnue."})
+
+    # -- routes ------------------------------------------------------------
+
+    def _page(self) -> None:
+        try:
+            contenu = PAGE.read_bytes()
+        except OSError:
+            self._json(500, {"erreur": f"Page introuvable : {PAGE}"})
+            return
+        self._envoyer(200, "text/html; charset=utf-8", contenu)
+
+    def _etat(self, parametres: dict[str, list[str]], forcer: bool) -> None:
+        championnat = (parametres.get("championnat", ["F1"])[0] or "F1").upper()
+        if championnat not in config.CHAMPIONNATS:
+            self._json(400, {"erreur": f"Championnat inconnu : {championnat}"})
+            return
+        try:
+            bankroll = float(parametres.get("bankroll", ["1000"])[0])
+        except ValueError:
+            self._json(400, {"erreur": "Bankroll illisible : attendu un nombre."})
+            return
+        if bankroll <= 0:
+            self._json(400, {"erreur": "La bankroll doit etre strictement positive."})
+            return
+        try:
+            self._json(200, etat_du_jour(championnat, bankroll, forcer))
+        except Exception as erreur:                       # remonte lisiblement
+            _journal.warning("%s : %s", type(erreur).__name__, erreur)
+            self._json(500, {"erreur": _message_erreur(erreur)})
+
+    def _aujourdhui(self, parametres: dict[str, list[str]],
+                    forcer: bool = False) -> None:
+        """La journee en cours, toutes ligues. En GET, ne depense aucun credit."""
+        try:
+            bankroll = float(parametres.get("bankroll", ["1000"])[0])
+        except ValueError:
+            self._json(400, {"erreur": "Bankroll illisible : attendu un nombre."})
+            return
+        if bankroll <= 0:
+            self._json(400, {"erreur": "La bankroll doit etre strictement positive."})
+            return
+        jour, erreur = _jour_demande(parametres)
+        if erreur:
+            self._json(400, {"erreur": erreur})
+            return
+        try:
+            self._json(200, etat_aujourdhui(bankroll, jour, forcer))
+        except Exception as erreur:
+            _journal.warning("%s : %s", type(erreur).__name__, erreur)
+            self._json(500, {"erreur": _message_erreur(erreur)})
+
+    def _combine(self, parametres: dict[str, list[str]]) -> None:
+        championnat = (parametres.get("championnat", ["F1"])[0] or "F1").upper()
+        try:
+            bankroll = float(parametres.get("bankroll", ["1000"])[0])
+            taille = int(self.headers.get("Content-Length") or 0)
+            jambes = json.loads(self.rfile.read(taille) or b"[]")
+        except (ValueError, json.JSONDecodeError):
+            self._json(400, {"erreur": "Requete illisible."})
+            return
+        if championnat not in config.CHAMPIONNATS or bankroll <= 0:
+            self._json(400, {"erreur": "Championnat ou bankroll invalide."})
+            return
+        try:
+            self._json(200, evaluer_combine(championnat, bankroll, jambes))
+        except Exception as erreur:
+            _journal.warning("%s : %s", type(erreur).__name__, erreur)
+            self._json(400, {"erreur": _message_erreur(erreur)})
+
+    # -- envoi -------------------------------------------------------------
+
+    def _json(self, code: int, charge: dict) -> None:
+        corps = json.dumps(charge, ensure_ascii=False, default=str).encode("utf-8")
+        self._envoyer(code, "application/json; charset=utf-8", corps)
+
+    def _envoyer(self, code: int, type_mime: str, corps: bytes) -> None:
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", type_mime)
+            self.send_header("Content-Length", str(len(corps)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(corps)
+        except (BrokenPipeError, ConnectionResetError):    # client parti en cours de route
+            _journal.debug("Client deconnecte avant la fin de la reponse.")
+            self.close_connection = True
+
+    def log_message(self, format: str, *args) -> None:    # noqa: A002
+        _journal.info("%s %s", self.address_string(), format % args)
+
+
+def servir(port: int = PORT, ouvrir: bool = False) -> None:
+    serveur = ThreadingHTTPServer((HOTE, port), Gestionnaire)
+    adresse = f"http://{HOTE}:{port}"
+    print(f"foot_edge — consultation sur {adresse}")
+    print("  Ctrl+C pour arreter. Rien n'est expose au reseau.")
+    if ouvrir:
+        threading.Timer(0.5, lambda: webbrowser.open(adresse)).start()
+    try:
+        serveur.serve_forever()
+    except KeyboardInterrupt:
+        print("\nArret.")
+    finally:
+        serveur.server_close()
+
+
+def main(arguments: list[str] | None = None) -> int:
+    analyseur = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    analyseur.add_argument("--port", "-p", type=int, default=PORT)
+    analyseur.add_argument("--ouvrir", "-o", action="store_true",
+                           help="ouvrir le navigateur au demarrage")
+    analyseur.add_argument("--verbeux", "-v", action="store_true")
+    args = analyseur.parse_args(arguments)
+    logging.basicConfig(level=logging.INFO if args.verbeux else logging.WARNING,
+                        format="%(message)s")
+    servir(args.port, args.ouvrir)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
