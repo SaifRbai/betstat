@@ -37,9 +37,39 @@ COUT_CREDITS_PAR_APPEL = len(MARCHES_API.split(",")) * len(REGIONS.split(","))
 
 MARCHE_1N2 = "1N2"
 MARCHE_TOTAUX = "plus_moins_2.5"
+MARCHE_DOUBLE_CHANCE = "double_chance"
+MARCHE_BTTS = "btts"
+
+# --------------------------------------------------------------------------
+# Marches etendus : 1X / 12 / X2 et GG / NG
+# --------------------------------------------------------------------------
+# The Odds API ne les sert PAS sur l'endpoint groupe (422 « Markets not
+# supported by this endpoint ») : il faut interroger chaque rencontre une par
+# une, a un credit par marche. Deux marches sur une journee de douze matchs
+# coutent donc vingt-quatre credits sur les cinq cents mensuels — c'est pourquoi
+# rien n'est recupere automatiquement, seulement sur demande explicite.
+#
+# Ce qui N'EXISTE PAS chez ce fournisseur, verifie par sondage (les marches
+# refuses ne coutent aucun credit) : `corners`, `totals_corners`,
+# `team_totals_corners`, `cards`, `totals_cards`. Aucune cote de corner ni de
+# carton n'est disponible, a aucun prix. Les pronos correspondants restent donc
+# invalidables par le marche, et le projet le dit deja sur chaque ligne.
+URL_EVENEMENT = ("https://api.the-odds-api.com/v4/sports/{sport}/events/"
+                 "{evenement}/odds")
+MARCHES_ETENDUS = ("double_chance", "btts")
+COUT_CREDITS_MARCHES_ETENDUS = len(MARCHES_ETENDUS) * len(REGIONS.split(","))
+
+# Nom rendu par l'API -> selection interne. « Metz or Draw » devient « 1N ».
+_DOUBLE_CHANCE = {("dom", "draw"): "1N", ("draw", "ext"): "N2", ("dom", "ext"): "12"}
 
 COLONNES_COTES = ("date", "dom", "ext", "championnat", "bookmaker",
-                  "marche", "selection", "cote", "horodatage")
+                  "marche", "selection", "cote", "horodatage", "lien")
+
+# Colonnes sans lesquelles un tableau de cotes n'est pas exploitable. `lien` et
+# `horodatage` n'en font pas partie : un cache ecrit par une version anterieure
+# ne les a pas, et doit rester lisible.
+COLONNES_INDISPENSABLES = ("date", "dom", "ext", "bookmaker", "marche",
+                           "selection", "cote")
 
 
 class QuotaEpuise(RuntimeError):
@@ -154,8 +184,13 @@ def _entier_entete(reponse, nom: str) -> int | None:
 def _appeler_api(sport: str, cle: str) -> tuple[list[dict], int | None, int | None]:
     reponse = requests.get(
         URL_BASE.format(sport=sport),
+        # `includeLinks` ne change pas le cout (mesure : 2 credits avec ou
+        # sans). Il ajoute l'adresse de la page du match chez chaque bookmaker.
+        # Aucun lien de COUPON pre-rempli n'existe : aucun des 23 bookmakers
+        # n'en renvoie, a aucun niveau de marche ou de selection.
         params={"apiKey": cle, "regions": REGIONS, "markets": MARCHES_API,
-                "oddsFormat": "decimal", "dateFormat": "iso"},
+                "oddsFormat": "decimal", "dateFormat": "iso",
+                "includeLinks": "true"},
         timeout=DELAI_RESEAU,
     )
     restant_int = _entier_entete(reponse, "x-requests-remaining")
@@ -253,6 +288,7 @@ def _lignes_evenement(evenement: dict, championnat: str, horodatage: str) -> lis
     lignes: list[dict] = []
     for bookmaker in evenement.get("bookmakers", []):
         titre = bookmaker.get("title") or bookmaker.get("key")
+        lien = bookmaker.get("link") or ""
         for marche in bookmaker.get("markets", []):
             for issue in marche.get("outcomes", []):
                 cle = marche.get("key")
@@ -271,9 +307,126 @@ def _lignes_evenement(evenement: dict, championnat: str, horodatage: str) -> lis
                     "championnat": championnat, "bookmaker": titre,
                     "marche": nom_marche, "selection": selection,
                     "cote": float(issue.get("price", 0) or 0),
-                    "horodatage": horodatage,
+                    "horodatage": horodatage, "lien": lien,
                 })
     return lignes
+
+
+def _selection_double_chance(nom: str, dom: str, ext: str) -> str | None:
+    """« Metz or Draw » -> « 1N ». Sans deviner : les deux camps doivent etre
+    reconnus, sinon on ecarte la ligne plutot que d'inventer une selection."""
+    parts = [p.strip() for p in nom.split(" or ")]
+    if len(parts) != 2:
+        return None
+    roles = []
+    for part in parts:
+        if part.lower() == "draw":
+            roles.append("draw")
+        elif part == dom:
+            roles.append("dom")
+        elif part == ext:
+            roles.append("ext")
+        else:
+            return None
+    return _DOUBLE_CHANCE.get(tuple(sorted(roles, key=("dom", "draw", "ext").index)))
+
+
+def _lignes_etendues(evenement: dict, championnat: str, horodatage: str) -> list[dict]:
+    """Lignes 1X/12/X2 et GG/NG d'une rencontre, au meme format que les autres."""
+    dom_brut = evenement.get("home_team", "")
+    ext_brut = evenement.get("away_team", "")
+    dom = noms_module.canoniser(dom_brut, "odds_api", identite_si_inconnu=True)
+    ext = noms_module.canoniser(ext_brut, "odds_api", identite_si_inconnu=True)
+    date_match = pd.to_datetime(evenement.get("commence_time"), utc=True, errors="coerce")
+
+    lignes: list[dict] = []
+    for bookmaker in evenement.get("bookmakers", []):
+        titre = bookmaker.get("title") or bookmaker.get("key")
+        lien = bookmaker.get("link") or ""
+        for marche in bookmaker.get("markets", []):
+            cle = marche.get("key")
+            for issue in marche.get("outcomes", []):
+                nom = issue.get("name", "")
+                if cle == "double_chance":
+                    selection = _selection_double_chance(nom, dom_brut, ext_brut)
+                    nom_marche = MARCHE_DOUBLE_CHANCE
+                elif cle == "btts":
+                    selection = {"Yes": "oui", "No": "non"}.get(nom)
+                    nom_marche = MARCHE_BTTS
+                else:
+                    continue
+                if selection is None:
+                    continue
+                lignes.append({
+                    "date": date_match, "dom": dom, "ext": ext,
+                    "championnat": championnat, "bookmaker": titre,
+                    "marche": nom_marche, "selection": selection,
+                    "cote": float(issue.get("price", 0) or 0),
+                    "horodatage": horodatage, "lien": lien,
+                })
+    return lignes
+
+
+def _chemin_cache_etendu(championnat: str, evenement: str) -> Path:
+    return config.DOSSIER_CACHE_COTES / f"{championnat.upper()}_ev_{evenement}.json"
+
+
+def recuperer_etendus(championnat: str, evenements: list[str],
+                      forcer: bool = False) -> pd.DataFrame:
+    """1X/12/X2 et GG/NG pour une liste de rencontres, une requete chacune.
+
+    Chaque rencontre coute deux credits. Rien n'est demande automatiquement :
+    l'appelant choisit les rencontres, et le compteur mensuel est le meme que
+    pour le reste — un seul budget, une seule verite sur ce qui reste.
+    """
+    championnat = championnat.upper()
+    info = config.CHAMPIONNATS.get(championnat) or {}
+    sport = info.get("odds")
+    if not sport:
+        return normaliser([], championnat)
+
+    config.creer_dossiers()
+    horodatage = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    lignes: list[dict] = []
+    for evenement in evenements:
+        chemin = _chemin_cache_etendu(championnat, evenement)
+        if not forcer and _cache_frais(chemin):
+            charge = json.loads(chemin.read_text(encoding="utf-8"))
+        else:
+            try:
+                charge = _appeler_evenement(sport, evenement)
+            except Exception as erreur:
+                _journal.info("Marches etendus indisponibles pour %s : %s",
+                              evenement, erreur)
+                if not chemin.exists():
+                    continue
+                charge = json.loads(chemin.read_text(encoding="utf-8"))
+            else:
+                chemin.write_text(json.dumps(charge), encoding="utf-8")
+        lignes.extend(_lignes_etendues(charge, championnat, horodatage))
+
+    if not lignes:
+        return normaliser([], championnat)
+    tableau = pd.DataFrame(lignes)
+    return tableau[tableau["cote"] > 1.0].reset_index(drop=True)
+
+
+def _appeler_evenement(sport: str, evenement: str) -> dict:
+    reponse = requests.get(
+        URL_EVENEMENT.format(sport=sport, evenement=evenement),
+        params={"apiKey": config.cle_api("odds"), "regions": REGIONS,
+                "markets": ",".join(MARCHES_ETENDUS), "oddsFormat": "decimal",
+                "dateFormat": "iso", "includeLinks": "true"},
+        timeout=DELAI_RESEAU)
+    if reponse.status_code == 429:
+        raise QuotaEpuise("Quota The Odds API epuise (429).")
+    reponse.raise_for_status()
+    cout = _entier_entete(reponse, "x-requests-last")
+    restant = _entier_entete(reponse, "x-requests-remaining")
+    utilises = _entier_entete(reponse, "x-requests-used")
+    if cout:
+        _incrementer_compteur(restant, utilises, cout)
+    return reponse.json()
 
 
 def normaliser(donnees: list[dict], championnat: str) -> pd.DataFrame:
@@ -439,7 +592,7 @@ def par_bookmaker(cotes: pd.DataFrame, date: Any, dom: str, ext: str) -> list[di
     """
     # Detail d'affichage : sur un tableau incomplet on ne montre rien plutot que
     # de faire echouer toute la page pour une colonne absente.
-    if cotes.empty or not set(COLONNES_COTES[:-1]).issubset(cotes.columns):
+    if cotes.empty or not set(COLONNES_INDISPENSABLES).issubset(cotes.columns):
         return []
     selection = cotes[(cotes["date"] == date) & (cotes["dom"] == dom) & (cotes["ext"] == ext)]
     if selection.empty:
@@ -452,11 +605,15 @@ def par_bookmaker(cotes: pd.DataFrame, date: Any, dom: str, ext: str) -> list[di
         for ligne in groupe.itertuples():
             cible = cotes_1n2 if ligne.marche == MARCHE_1N2 else totaux
             cible[ligne.selection] = float(ligne.cote)
+        # Le lien mene a la PAGE DU MATCH chez ce bookmaker, pas a un coupon
+        # pre-rempli : aucun des vingt-trois bookmakers du flux n'en fournit.
+        liens = [str(l) for l in groupe.get("lien", pd.Series(dtype=str)) if l]
         lignes.append({
             "bookmaker": str(nom),
             "1": cotes_1n2.get("1"), "N": cotes_1n2.get("N"), "2": cotes_1n2.get("2"),
             "plus": totaux.get("plus"), "moins": totaux.get("moins"),
             "marge": marge_bookmaker(cotes_1n2),
+            "lien": liens[0] if liens else None,
         })
     # marge inconnue en dernier : on ne fait pas passer une absence pour un zero
     lignes.sort(key=lambda l: (l["marge"] is None, l["marge"], l["bookmaker"]))

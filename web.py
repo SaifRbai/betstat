@@ -841,8 +841,82 @@ def _cote_maximale(candidats: list) -> float:
     return round(plafond, 2)
 
 
+# Deux credits par rencontre. Sans borne, une journee de quatre-vingts matchs
+# consomme cent soixante credits — un tiers du budget mensuel en un clic. On ne
+# demande les marches etendus que pour les rencontres qui ont une chance d'etre
+# retenues : celles dont le favori 1N2 depasse deja le seuil.
+PLAFOND_RENCONTRES_ETENDUES = 20
+
+
+def _cotes_etendues(par_championnat: dict, jour: str | None,
+                    seuil: float = 0.62) -> dict:
+    """Ajoute 1X/12/X2 et GG/NG, mais seulement la ou ca peut servir.
+
+    Une ligue qui echoue garde ses cotes de base plutot que de disparaitre.
+    """
+    # Les rencontres deja interessantes sur le 1N2, les plus probables d'abord.
+    interessantes: dict[str, list] = {}
+    for code, cotes in par_championnat.items():
+        for candidat in quotidien_module.candidats(
+                cotes, code, seuil=seuil, prime_minimale=0.0):
+            if jour is None or _jour_local(candidat.date) == jour:
+                interessantes.setdefault(code, []).append(candidat)
+    classees = sorted(
+        ((code, c) for code, liste in interessantes.items() for c in liste),
+        key=lambda paire: paire[1].p_marche, reverse=True)[:PLAFOND_RENCONTRES_ETENDUES]
+    retenues: dict[str, set] = {}
+    for code, candidat in classees:
+        retenues.setdefault(code, set()).add((candidat.dom, candidat.ext))
+    _journal.info("Marches etendus : %d rencontre(s) retenue(s), soit %d credits.",
+                  len(classees), len(classees) * cotes_module.COUT_CREDITS_MARCHES_ETENDUS)
+
+    enrichi = {}
+    for code, cotes in par_championnat.items():
+        paires = retenues.get(code)
+        if not paires:
+            enrichi[code] = cotes
+            continue
+        matchs = cotes_module.matchs_a_venir(cotes)
+        if not matchs.empty:
+            matchs = matchs[[(str(l.dom), str(l.ext)) in paires
+                             for l in matchs.itertuples()]]
+        identifiants = _identifiants_evenements(code, matchs)
+        if not identifiants:
+            enrichi[code] = cotes
+            continue
+        try:
+            supplement = cotes_module.recuperer_etendus(code, identifiants)
+        except Exception as erreur:
+            _journal.warning("Marches etendus %s : %s", code, erreur)
+            enrichi[code] = cotes
+            continue
+        enrichi[code] = (pd.concat([cotes, supplement], ignore_index=True)
+                         if not supplement.empty else cotes)
+    return enrichi
+
+
+def _identifiants_evenements(championnat: str, matchs) -> list[str]:
+    """Identifiants The Odds API des rencontres retenues, lus du cache brut."""
+    if matchs.empty:
+        return []
+    try:
+        brut, _ = cotes_module.recuperer_brut(championnat)
+    except Exception:
+        return []
+    voulus = {(str(ligne.dom), str(ligne.ext)) for ligne in matchs.itertuples()}
+    identifiants = []
+    for evenement in brut:
+        dom = noms_module.canoniser(evenement.get("home_team", ""), "odds_api",
+                                    identite_si_inconnu=True)
+        ext = noms_module.canoniser(evenement.get("away_team", ""), "odds_api",
+                                    identite_si_inconnu=True)
+        if (dom, ext) in voulus and evenement.get("id"):
+            identifiants.append(evenement["id"])
+    return identifiants
+
+
 def combine_du_jour(cible: float = 9.0, mise: float = 10.0,
-                    jour: str | None = None) -> dict:
+                    jour: str | None = None, etendus: bool = False) -> dict:
     """Le combine de favoris qui atteint l'objectif de gain demande.
 
     Lit uniquement les cotes en cache : cliquer ce bouton ne doit jamais
@@ -866,7 +940,15 @@ def combine_du_jour(cible: float = 9.0, mise: float = 10.0,
     # Seuil abaisse et prime de prix non exigee : ici on cherche a EMPILER des
     # favoris, pas a trouver la meilleure affaire du jour. Ce sont deux
     # questions differentes et elles n'ont pas les memes filtres.
-    candidats = quotidien_module.du_jour(par_championnat, seuil=0.62, prime_minimale=0.0)
+    if etendus:
+        par_championnat = _cotes_etendues(par_championnat, jour)
+        # Melange de marches : une seule jambe par rencontre, sinon « victoire
+        # du domicile » et « domicile ou nul » se multiplieraient alors qu'ils
+        # sont correles a 100 %.
+        candidats = quotidien_module.du_jour_multi(par_championnat, seuil=0.62)
+    else:
+        candidats = quotidien_module.du_jour(
+            par_championnat, seuil=0.62, prime_minimale=0.0)
     if jour is not None:
         # Le decoupage des journees est celui de `_jour_local`, donc le meme que
         # celui du navigateur : un match a 22h30 UTC ne doit pas tomber dans deux
@@ -896,6 +978,7 @@ def combine_du_jour(cible: float = 9.0, mise: float = 10.0,
         "objectif_atteint": combine.objectif_atteint,
         "cote_maximale": _cote_maximale(candidats),
         "candidats_du_jour": len(candidats),
+        "marches_melanges": etendus,
         "cible": cible, "mise": combine.mise, "gain": combine.gain,
         "cote_totale": combine.cote_totale,
         "probabilite": combine.probabilite,
@@ -995,8 +1078,9 @@ class Gestionnaire(BaseHTTPRequestHandler):
             if erreur:
                 self._json(400, {"erreur": erreur})
                 return
+            etendus = parametres.get("etendus", ["0"])[0] in ("1", "true", "oui")
             try:
-                self._json(200, combine_du_jour(cible, mise, jour))
+                self._json(200, combine_du_jour(cible, mise, jour, etendus))
             except Exception as souci:            # jamais une connexion coupee
                 _journal.warning("%s : %s", type(souci).__name__, souci)
                 self._json(500, {"erreur": _message_erreur(souci)})

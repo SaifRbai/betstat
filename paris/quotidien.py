@@ -126,6 +126,152 @@ def candidats(cotes: pd.DataFrame, championnat: str,
     return retenus
 
 
+# --------------------------------------------------------------------------
+# Melange de marches : 1N2, double chance, GG/NG, plus/moins
+# --------------------------------------------------------------------------
+# Deux precautions, et elles ne sont pas de forme.
+#
+# 1. La double chance ne forme PAS une partition qui somme a 1 : ses trois
+#    selections couvrent chacune deux issues sur trois, donc la somme vaut 2.
+#    La passer telle quelle au de-vig diviserait toutes ses probabilites par
+#    deux. On les DERIVE donc du 1N2 — p(1X) = p(1) + p(N) — ce qui est exact,
+#    et en prime s'appuie sur le marche le mieux cote (22 bookmakers contre 3).
+#    Les cotes de double chance ne servent qu'au prix.
+#
+# 2. Melanger des marches d'un MEME match brise l'independance : « victoire du
+#    domicile » et « le domicile ou le nul » sont correles a 100 %. Le combine
+#    n'accepte donc qu'une seule jambe par rencontre.
+_COMPOSITION_DC = {"1N": ("1", "N"), "N2": ("N", "2"), "12": ("1", "2")}
+
+
+def _consensus_partition(cotes: pd.DataFrame, marche: str) -> pd.DataFrame:
+    """Consensus de-vigge d'un marche dont les selections somment bien a 1."""
+    part = cotes[cotes["marche"] == marche]
+    if part.empty:
+        return pd.DataFrame()
+    try:
+        return calibration.consensus(part)
+    except (ValueError, KeyError) as erreur:
+        _journal.info("Consensus %s indisponible : %s", marche, erreur)
+        return pd.DataFrame()
+
+
+def _double_chance(consensus_1n2: pd.DataFrame, cotes: pd.DataFrame) -> pd.DataFrame:
+    """Probabilites 1X / X2 / 12 deduites du 1N2, prix pris sur leur marche."""
+    prix = cotes[cotes["marche"] == "double_chance"]
+    if consensus_1n2.empty or prix.empty:
+        return pd.DataFrame()
+    meilleures = (prix.groupby(["date", "dom", "ext", "selection"], dropna=False)
+                  .apply(lambda g: pd.Series({
+                      "meilleure_cote": g["cote"].max(),
+                      "bookmaker_meilleure": g.loc[g["cote"].idxmax(), "bookmaker"],
+                      "nb_bookmakers": g["bookmaker"].nunique()}),
+                         include_groups=False)
+                  .reset_index())
+
+    lignes = []
+    for (date, dom, ext), groupe in consensus_1n2.groupby(["date", "dom", "ext"],
+                                                          dropna=False):
+        p = dict(zip(groupe["selection"], groupe["p_marche"]))
+        for selection, composants in _COMPOSITION_DC.items():
+            if not all(c in p for c in composants):
+                continue
+            lignes.append({"date": date, "dom": dom, "ext": ext,
+                           "marche": "double_chance", "selection": selection,
+                           "p_marche": float(sum(p[c] for c in composants))})
+    if not lignes:
+        return pd.DataFrame()
+    return pd.DataFrame(lignes).merge(
+        meilleures, on=["date", "dom", "ext", "selection"], how="inner")
+
+
+_LIBELLES_MARCHE = {
+    "1N2": {"1": "{dom}", "N": "le nul", "2": "{ext}"},
+    "double_chance": {"1N": "{dom} ou nul", "N2": "{ext} ou nul",
+                      "12": "pas de nul"},
+    "btts": {"oui": "les deux marquent (GG)", "non": "une equipe ne marque pas (NG)"},
+    "plus_moins_2.5": {"plus": "plus de 2.5 buts", "moins": "moins de 2.5 buts"},
+}
+
+
+def candidats_multi(cotes: pd.DataFrame, championnat: str,
+                    seuil: float = SEUIL_PROBABILITE) -> list[Selection]:
+    """La selection la plus probable de CHAQUE marche cote, pour chaque match.
+
+    Melange 1N2, double chance, GG/NG et plus/moins — les quatre seuls marches
+    que The Odds API sert. Ni corners ni cartons : ce fournisseur ne les cote
+    pas du tout, a aucun prix (verifie par sondage de l'API).
+
+    Une seule jambe par rencontre en sortie de `du_jour_multi` : deux marches
+    d'un meme match ne sont pas independants, et les multiplier ferait passer
+    une correlation pour une diversification.
+    """
+    if cotes.empty:
+        return []
+    consensus_1n2 = _consensus_partition(cotes, "1N2")
+    morceaux = [consensus_1n2.assign(marche="1N2") if not consensus_1n2.empty
+                else pd.DataFrame()]
+    for marche in ("btts", "plus_moins_2.5"):
+        part = _consensus_partition(cotes, marche)
+        if not part.empty:
+            morceaux.append(part.assign(marche=marche))
+    dc = _double_chance(consensus_1n2, cotes)
+    if not dc.empty:
+        morceaux.append(dc)
+
+    morceaux = [m for m in morceaux if not m.empty]
+    if not morceaux:
+        return []
+    tout = pd.concat(morceaux, ignore_index=True)
+
+    retenus: list[Selection] = []
+    for (date, dom, ext, marche), groupe in tout.groupby(
+            ["date", "dom", "ext", "marche"], dropna=False):
+        favori = groupe.loc[groupe["p_marche"].idxmax()]
+        if favori["p_marche"] < seuil:
+            continue
+        if int(favori.get("nb_bookmakers", 0)) < config.MIN_BOOKMAKERS_CONSENSUS:
+            continue
+        cote = float(favori["meilleure_cote"])
+        libelle = _LIBELLES_MARCHE.get(marche, {}).get(
+            str(favori["selection"]), str(favori["selection"]))
+        retenus.append(Selection(
+            date=date, championnat=championnat.upper(), dom=dom, ext=ext,
+            selection=f"{marche}:{favori['selection']}",
+            equipe=libelle.format(dom=dom, ext=ext),
+            p_marche=float(favori["p_marche"]), cote=cote,
+            bookmaker=str(favori["bookmaker_meilleure"]),
+            cote_mediane=cote, prime=0.0,
+            nb_bookmakers=int(favori.get("nb_bookmakers", 0)),
+            esperance=float(favori["p_marche"]) * cote - 1.0))
+    return retenus
+
+
+def du_jour_multi(par_championnat: dict[str, pd.DataFrame],
+                  seuil: float = SEUIL_PROBABILITE) -> list[Selection]:
+    """Toutes les selections eligibles, tous marches, UNE PAR RENCONTRE.
+
+    La contrainte d'une jambe par match n'est pas un detail : « victoire du
+    domicile » et « domicile ou nul » sur le meme match sont correles a 100 %.
+    Les empiler donnerait une probabilite jointe fausse, plus flatteuse que la
+    realite — exactement l'erreur que ce module existe pour ne pas commettre.
+    """
+    tout: list[Selection] = []
+    for championnat, cotes in par_championnat.items():
+        tout.extend(candidats_multi(cotes, championnat, seuil))
+    tout.sort(key=lambda s: s.p_marche, reverse=True)
+
+    vues: set[tuple] = set()
+    uniques: list[Selection] = []
+    for selection in tout:
+        cle = (str(selection.date), selection.dom, selection.ext)
+        if cle in vues:
+            continue
+        vues.add(cle)
+        uniques.append(selection)
+    return uniques
+
+
 def du_jour(par_championnat: dict[str, pd.DataFrame],
             seuil: float = SEUIL_PROBABILITE,
             prime_minimale: float = PRIME_MINIMALE) -> list[Selection]:

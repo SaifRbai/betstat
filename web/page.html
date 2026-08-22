@@ -220,6 +220,11 @@
                font-size: 11px; line-height: 1.35; }
 
   .tableau { overflow-x: auto; border: 1px solid var(--trait); border-radius: 8px; }
+  /* Le nom d'un bookmaker mene a la page du match chez lui. Discret : c'est un
+     acces, pas une incitation. */
+  .tableau a { color: inherit; text-decoration: underline;
+    text-underline-offset: 2px; text-decoration-color: var(--trait); }
+  .tableau a:hover { text-decoration-color: var(--accent); }
   table { border-collapse: collapse; width: 100%; background: var(--carte); font-size: 13px; }
   th, td { padding: 8px 7px; text-align: right; white-space: nowrap; }
   th {
@@ -310,6 +315,13 @@
     transform: translateY(-50%); color: var(--doux); font-size: 12px;
     pointer-events: none;
   }
+
+  .bascule {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    font-size: 14px; color: var(--encre); padding: 6px 0;
+  }
+  .bascule input { width: auto; margin: 0; }
+  .note-cout { font-size: 11px; color: var(--jauge-court); min-height: 14px; }
 
   .curseur {
     -webkit-appearance: none; appearance: none; width: 100%; height: 6px;
@@ -601,6 +613,12 @@
       <div class="curseur-bornes"><span class="borne" id="borne-bas">x1.5</span><span class="borne" id="borne-haut">x100</span><span class="repere-max" id="cible-max" hidden></span></div>
     </div>
     <div class="reglage">
+      <label for="etendus" title="1X, 12, X2, GG, NG — deux credits The Odds API par rencontre">Marches</label>
+      <label class="bascule"><input type="checkbox" id="etendus">
+        <span>Melanger 1X / GG / NG</span></label>
+      <div class="note-cout" id="cout-etendus"></div>
+    </div>
+    <div class="reglage">
       <!-- « vise » et non « si tout passe » : quand l'objectif depasse ce que
            la journee permet, le combine reellement propose rapporte moins. Le
            chiffre obtenu est celui du panneau, pas celui-ci. -->
@@ -694,7 +712,7 @@ function tableauBookmakers(m) {
           <th>+2.5</th><th>-2.5</th><th>Marge</th>
         </tr></thead>
         <tbody>${lignes.map((b) => `<tr>
-          <td>${b.bookmaker}</td>
+          <td>${lienBookmaker(b)}</td>
           ${caseCote(b["1"], best["1"])}
           ${caseCote(b.N, best.N)}
           ${caseCote(b["2"], best["2"])}
@@ -716,6 +734,18 @@ function tableauBookmakers(m) {
 const PUCE_1N2 = { "1": "p1", "N": "pn", "2": "p2" };
 
 // Quel bookmaker offre la meilleure cote sur cette selection.
+// Le lien mene a la PAGE DU MATCH chez le bookmaker, pas a un coupon
+// pre-rempli : aucun des 23 bookmakers du flux n'expose de lien de coupon, ni
+// au niveau du marche, ni au niveau de la selection. La cote et la selection
+// restent donc a reporter a la main — et c'est bien ainsi qu'on relit une cote
+// avant de la jouer, car elle peut avoir bouge depuis le dernier cache.
+function lienBookmaker(b) {
+  if (!b.lien) return b.bookmaker;
+  return `<a href="${b.lien}" target="_blank" rel="noopener noreferrer"
+    title="ouvrir ce match chez ${b.bookmaker} — la selection reste a reporter">${
+    b.bookmaker} ↗</a>`;
+}
+
 function bookmakerDe(m, selection) {
   const best = (m.meilleures_cotes || {})[selection];
   if (!best) return null;
@@ -1786,8 +1816,10 @@ async function afficherCombineDuJour() {
   else bloc.innerHTML = '<div class="note squelette">Calcul...</div>';
   bouton.disabled = true;
   try {
+    const etendus = $("etendus").checked;
     const reponse = await fetch(`/api/combine-du-jour?cible=${cible}`
-      + `&mise=${mise}&jour=${encodeURIComponent(jour)}`);
+      + `&mise=${mise}&jour=${encodeURIComponent(jour)}`
+      + `&etendus=${etendus ? 1 : 0}`);
     const c = await reponse.json();
     if (jeton !== jetonCombine) return;      // une demande plus recente a suivi
     bloc.classList.remove("squelette");
@@ -1971,6 +2003,13 @@ async function demarrer() {
   $("combine-jour").addEventListener("click", () => afficherCombineDuJour());
   // Le curseur ne declenche un calcul que quand la main s'arrete ; le libelle
   // et le gain projete, eux, suivent chaque cran.
+  $("etendus").addEventListener("change", () => {
+    // Le cout est annonce AVANT, pas constate apres : chaque rencontre
+    // interrogee coute deux credits The Odds API, plafonnees a vingt.
+    $("cout-etendus").textContent = $("etendus").checked
+      ? "jusqu'a 40 credits The Odds API (2 par rencontre, 20 au plus)" : "";
+    combineDifferee(50);
+  });
   $("cible").addEventListener("input", () => combineDifferee());
   $("mise").addEventListener("input", () => combineDifferee(420));
   rafraichirReglages();

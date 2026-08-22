@@ -199,3 +199,48 @@ def test_dernieres_cotes_avant(tmp_path: Path) -> None:
 
 def test_historiser_vide(tmp_path: Path) -> None:
     assert cotes.historiser(pd.DataFrame(), tmp_path / "vide.db") == 0
+
+# --------------------------------------------------------------------------
+# Liens vers la page du match chez le bookmaker
+# --------------------------------------------------------------------------
+
+def _evenement_avec_lien() -> dict:
+    return {
+        "home_team": "Lens", "away_team": "Auxerre",
+        "commence_time": "2026-08-22T18:00:00Z",
+        "bookmakers": [{
+            "title": "Betclic (FR)",
+            "link": "https://www.betclic.fr/football/lens-auxerre-m123",
+            "markets": [{"key": "h2h", "outcomes": [
+                {"name": "Lens", "price": 1.53},
+                {"name": "Auxerre", "price": 5.60},
+                {"name": "Draw", "price": 4.35}]}],
+        }],
+    }
+
+
+def test_le_lien_du_bookmaker_est_conserve() -> None:
+    tableau = cotes.normaliser([_evenement_avec_lien()], "F1")
+    assert set(tableau["lien"]) == {"https://www.betclic.fr/football/lens-auxerre-m123"}
+
+
+def test_un_bookmaker_sans_lien_ne_casse_rien() -> None:
+    """Six bookmakers sur vingt-trois n'en fournissent pas."""
+    evenement = _evenement_avec_lien()
+    del evenement["bookmakers"][0]["link"]
+    tableau = cotes.normaliser([evenement], "F1")
+    assert set(tableau["lien"]) == {""}
+
+
+def test_le_detail_par_bookmaker_porte_le_lien() -> None:
+    tableau = cotes.normaliser([_evenement_avec_lien()], "F1")
+    detail = cotes.par_bookmaker(tableau, tableau["date"].iloc[0], "Lens", "Auxerre")
+    assert detail and detail[0]["lien"].startswith("https://www.betclic.fr/")
+
+
+def test_un_cache_ancien_sans_colonne_lien_reste_lisible() -> None:
+    """Les caches ecrits avant cette version n'ont pas la colonne : le detail
+    doit continuer de s'afficher, sans lien."""
+    tableau = cotes.normaliser([_evenement_avec_lien()], "F1").drop(columns=["lien"])
+    detail = cotes.par_bookmaker(tableau, tableau["date"].iloc[0], "Lens", "Auxerre")
+    assert detail and detail[0]["lien"] is None

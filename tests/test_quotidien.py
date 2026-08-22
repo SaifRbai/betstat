@@ -212,3 +212,63 @@ def test_les_plus_probables_sont_empiles_en_premier() -> None:
         [_selection(2.0, 0.50), _selection(1.2, 0.83), _selection(1.5, 0.66)],
         cible=100.0, au_mieux=True)
     assert [round(j.cote, 2) for j in combine.jambes] == [1.2, 1.5, 2.0]
+
+# --------------------------------------------------------------------------
+# Melange de marches
+# --------------------------------------------------------------------------
+
+def _cotes_multi() -> pd.DataFrame:
+    """Un match, quatre marches, trois bookmakers chacun."""
+    lignes = []
+    barème = {
+        ("1N2", "1"): 1.40, ("1N2", "N"): 4.50, ("1N2", "2"): 7.00,
+        ("btts", "oui"): 1.80, ("btts", "non"): 2.00,
+        ("plus_moins_2.5", "plus"): 1.75, ("plus_moins_2.5", "moins"): 2.05,
+        ("double_chance", "1N"): 1.10, ("double_chance", "N2"): 2.60,
+        ("double_chance", "12"): 1.18,
+    }
+    for (marche, selection), cote in barème.items():
+        for book in ("b1", "b2", "b3"):
+            lignes.append({"date": pd.Timestamp("2026-08-22T18:00:00Z"),
+                           "dom": "A", "ext": "B", "championnat": "F1",
+                           "bookmaker": book, "marche": marche,
+                           "selection": selection, "cote": cote})
+    return pd.DataFrame(lignes)
+
+
+def test_le_melange_produit_une_selection_par_marche() -> None:
+    marches = {s.selection.split(":")[0]
+               for s in quotidien.candidats_multi(_cotes_multi(), "F1", seuil=0.50)}
+    assert {"1N2", "double_chance"} <= marches
+
+
+def test_la_double_chance_est_deduite_du_1n2_pas_devigguee() -> None:
+    """Ses trois selections couvrent chacune deux issues sur trois : leur somme
+    vaut 2. Un de-vig naif diviserait toutes ses probabilites par deux."""
+    candidats = quotidien.candidats_multi(_cotes_multi(), "F1", seuil=0.0)
+    dc = {s.selection: s for s in candidats if s.selection.startswith("double_chance")}
+    un_n2 = {s.selection: s for s in candidats if s.selection.startswith("1N2")}
+    if "double_chance:1N" in dc and un_n2:
+        # p(1N) doit valoir p(1) + p(N), et donc depasser p(1) seul.
+        p_1 = next((s.p_marche for c, s in un_n2.items() if c.endswith(":1")), None)
+        if p_1 is not None:
+            assert dc["double_chance:1N"].p_marche > p_1
+            assert dc["double_chance:1N"].p_marche <= 1.0
+
+
+def test_une_seule_jambe_par_rencontre() -> None:
+    """« Victoire du domicile » et « domicile ou nul » sont correles a 100 % :
+    les empiler donnerait une probabilite jointe fausse et flatteuse."""
+    uniques = quotidien.du_jour_multi({"F1": _cotes_multi()}, seuil=0.0)
+    cles = [(str(s.date), s.dom, s.ext) for s in uniques]
+    assert len(cles) == len(set(cles)) == 1
+
+
+def test_le_melange_garde_la_selection_la_plus_probable() -> None:
+    uniques = quotidien.du_jour_multi({"F1": _cotes_multi()}, seuil=0.0)
+    assert uniques[0].selection == "double_chance:1N", uniques[0].selection
+
+
+def test_des_cotes_vides_ne_plantent_pas() -> None:
+    assert quotidien.candidats_multi(pd.DataFrame(), "F1") == []
+    assert quotidien.du_jour_multi({"F1": pd.DataFrame()}) == []
