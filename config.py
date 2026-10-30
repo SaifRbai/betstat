@@ -62,7 +62,7 @@ def creer_dossiers() -> None:
 # --------------------------------------------------------------------------
 
 # code football-data.co.uk -> (nom lisible, pays, cle The Odds API, cle FBref/Understat)
-CHAMPIONNATS: Final[dict[str, dict[str, str | None]]] = {
+CHAMPIONNATS: Final[dict[str, dict[str, str | bool | None]]] = {
     "E0": {"nom": "Premier League", "pays": "Angleterre",
            "odds": "soccer_epl", "fbref": "ENG-Premier League", "understat": "ENG-Premier League"},
     "E1": {"nom": "Championship", "pays": "Angleterre",
@@ -107,7 +107,22 @@ CHAMPIONNATS: Final[dict[str, dict[str, str | None]]] = {
            "odds": "soccer_turkey_super_league", "fbref": None, "understat": None},
     "G1": {"nom": "Super League", "pays": "Grece",
            "odds": "soccer_greece_super_league", "fbref": None, "understat": None},
+    # Saison sur l'annee civile, publiee par football-data.co.uk dans un fichier
+    # unique (new/BRA.csv) qui couvre toutes les saisons : voir data/resultats.py.
+    "BRA": {"nom": "Brasileirao Serie A", "pays": "Bresil",
+            "odds": "soccer_brazil_campeonato", "fbref": None, "understat": None,
+            "annee_civile": True},
+    # Absente de football-data.co.uk : resultats tires d'API-Football (ligue 72),
+    # dont le plan gratuit ne couvre que les saisons 2022 a 2024.
+    "BRB": {"nom": "Brasileirao Serie B", "pays": "Bresil",
+            "odds": "soccer_brazil_serie_b", "fbref": None, "understat": None,
+            "annee_civile": True, "api_football": 72},
 }
+
+# Championnats dont la saison suit l'annee civile ("2026" et non "2526").
+CHAMPIONNATS_ANNEE_CIVILE: Final[frozenset[str]] = frozenset(
+    code for code, info in CHAMPIONNATS.items() if info.get("annee_civile")
+)
 
 CODES_CHAMPIONNATS: Final[tuple[str, ...]] = tuple(CHAMPIONNATS)
 

@@ -379,7 +379,7 @@ class CombineCible:
 
 
 def combine_vers(candidats: list[Selection], cible: float = 9.0,
-                 mise: float = 10.0, maximum_jambes: int = 15,
+                 mise: float = 10.0, maximum_jambes: int | None = 15,
                  au_mieux: bool = False) -> CombineCible | None:
     """Empile les favoris les plus surs jusqu'a atteindre `cible` fois la mise.
 
@@ -404,7 +404,7 @@ def combine_vers(candidats: list[Selection], cible: float = 9.0,
     cote = 1.0
     probabilite = 1.0
     for selection in ordonnes:
-        if cote >= cible or len(jambes) >= maximum_jambes:
+        if cote >= cible or (maximum_jambes is not None and len(jambes) >= maximum_jambes):
             break
         jambes.append(selection)
         cote *= selection.cote

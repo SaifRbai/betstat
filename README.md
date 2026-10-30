@@ -145,6 +145,22 @@ comptes annexes (corners, cartons) y sont volontairement absents.
 commande avec sa sortie reelle, la routine hebdomadaire, le budget du quota API,
 l'automatisation des cotes de cloture et les problemes courants.
 
+## Sur le telephone (Android)
+
+Les calculs restent sur le PC ; le telephone affiche l'interface web.
+
+```bash
+python web.py --reseau            # affiche l'adresse a ouvrir sur le telephone
+./android/construire.sh           # une fois : construit android/build/RAB3OUNSTAT.apk
+```
+
+Sur le telephone (meme Wi-Fi), ouvrir `http://<ip-du-pc>:8000/RAB3OUNSTAT.apk`
+dans Chrome, installer (autoriser les « sources inconnues » pour Chrome),
+puis lancer RAB3OUNSTAT et entrer l'adresse du PC. `--reseau` ouvre la page a
+tout le reseau local, rafraichissement des cotes compris : a eviter sur un
+Wi-Fi public. La construction demande le SDK Android dans `~/Android/Sdk`
+(platforms;android-35, build-tools;35.0.0) et Java 17.
+
 ## Les 7 onglets
 
 | Onglet | Contenu |

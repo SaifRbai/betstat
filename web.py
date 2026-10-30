@@ -14,6 +14,8 @@ Deux caches, pour deux raisons differentes :
     Le rafraichissement est un bouton, un geste explicite.
 
     python web.py                 puis http://127.0.0.1:8000
+    python web.py --reseau        pour l'ouvrir depuis un telephone sur le
+                                  meme Wi-Fi, et l'installer comme application
 """
 
 from __future__ import annotations
@@ -21,10 +23,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import re
+import socket
 import threading
 import webbrowser
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -54,9 +58,27 @@ _journal = logging.getLogger("foot_edge.web")
 
 HOTE = "127.0.0.1"
 PORT = 8000
-PAGE = Path(__file__).resolve().parent / "web" / "page.html"
+DOSSIER_WEB = Path(__file__).resolve().parent / "web"
+PAGE = DOSSIER_WEB / "page.html"
+# Fichiers de l'application installable (PWA), servis tels quels. Une liste
+# fermee plutot qu'un dossier statique : aucun chemin venu de l'URL ne touche
+# le disque.
+STATIQUES = {
+    "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+    "/sw.js": ("sw.js", "text/javascript; charset=utf-8"),
+    "/icones/icone-180.png": ("icones/icone-180.png", "image/png"),
+    "/icones/icone-192.png": ("icones/icone-192.png", "image/png"),
+    "/icones/icone-512.png": ("icones/icone-512.png", "image/png"),
+    # L'application Android, construite par android/construire.sh : le
+    # telephone la telecharge depuis le serveur, sans cable.
+    "/RAB3OUNSTAT.apk": ("../android/build/RAB3OUNSTAT.apk",
+                         "application/vnd.android.package-archive"),
+}
 SAISONS = 4
 SOURCE = "buts"
+# Pas de limite au nombre de matchs du combine du jour : il empile les favoris
+# jusqu'a l'objectif demande, aussi loin qu'il le faut (choix de l'utilisateur).
+MAX_JAMBES_COMBINE_JOUR: int | None = None
 
 # La page groupe les matchs avec `toLocaleDateString` du navigateur, donc dans
 # le fuseau de la machine. Le serveur doit decouper ses journees dans le meme,
@@ -75,6 +97,16 @@ def _jour_local(instant: Any) -> str:
 def aujourdhui() -> str:
     """La journee en cours, telle que la page la nomme « Aujourd'hui »."""
     return _jour_local(datetime.now(timezone.utc))
+
+
+def _cotes_a_venir(cotes: pd.DataFrame, jour: date | None = None) -> pd.DataFrame:
+    """Tous les matchs du cache a partir de la date locale, sans limite de semaine."""
+    if cotes.empty:
+        return cotes
+    debut = jour or date.fromisoformat(aujourdhui())
+    dates = pd.to_datetime(cotes["date"], utc=True, errors="coerce")
+    jours = dates.dt.tz_convert(_FUSEAU_LOCAL).dt.date
+    return cotes.loc[dates.notna() & (jours >= debut)].copy()
 
 
 # --------------------------------------------------------------------------
@@ -98,6 +130,12 @@ class Cache:
         with self._verrou:
             if championnat not in self._modeles:
                 matchs, _ = charger_donnees(championnat, SAISONS, SOURCE)
+                if matchs.empty and resultats_module.ligue_api_football(championnat):
+                    raise ValueError(
+                        f"Aucune donnee recente pour {championnat} : ses resultats "
+                        "viennent d'API-Football, dont le plan gratuit s'arrete a la "
+                        "saison 2024. Un abonnement payant est necessaire pour estimer "
+                        "la saison en cours.")
                 if matchs.empty:
                     raise ValueError(
                         f"Aucune donnee pour {championnat}. Verifie ta connexion : "
@@ -440,13 +478,14 @@ def affiches(championnat: str,
     la page doit le dire plutot que d'afficher sept matchs sur neuf sans un mot.
 
     `jour` (AAAA-MM-JJ local) restreint a une seule journee. Le filtre est
-    applique avant `predire` : sur une vue du jour, calculer les huit matchs de
-    la semaine pour n'en montrer qu'un serait payer huit fois le meme prix.
+    applique avant `predire` : sur une vue du jour, calculer tous les matchs a
+    venir pour n'en montrer qu'un serait payer plusieurs fois le meme prix.
     """
     matchs_charges, modele = CACHE.modele(championnat)
     modeles_annexes = CACHE.annexes(championnat)
     comptes = resultats_module.nb_matchs_par_equipe(matchs_charges)
     cotes, age = cotes_module.lire_cache(championnat)
+    cotes = _cotes_a_venir(cotes)
     marche_devigge = _probabilites_de_marche(cotes)
     poids_modele = calibration.poids_melange(championnat)
     absences_cache = _Absences()
@@ -558,6 +597,7 @@ def opportunites(championnat: str, bankroll: float, forcer: bool = False,
         cotes, age = cotes_module.recuperer(championnat, forcer=True), 0.0
     else:
         cotes, age = cotes_module.lire_cache(championnat)
+    cotes = _cotes_a_venir(cotes)
     if not cotes.empty and jour is not None:
         cotes = cotes[cotes["date"].map(_jour_local) == jour]
     if cotes.empty:
@@ -644,6 +684,7 @@ def ligues_du_jour(jour: str) -> list[str]:
     codes = []
     for code in config.CHAMPIONNATS_AVEC_COTES:
         cotes, _ = cotes_module.lire_cache(code)
+        cotes = _cotes_a_venir(cotes)
         if not cotes.empty and (cotes["date"].map(_jour_local) == jour).any():
             codes.append(code)
     return codes
@@ -829,14 +870,15 @@ def _libelle_jour(jour: str | None) -> str:
 
 
 def _cote_maximale(candidats: list) -> float:
-    """La cote qu'on obtiendrait en empilant TOUS les candidats disponibles.
+    """Cote obtenue en empilant les candidats, les plus probables d'abord.
 
-    C'est le plafond du jour. Quand l'objectif demande le depasse, c'est ce
-    chiffre-la qu'il faut montrer : il dit ou s'arrete le possible, la ou un
-    simple « impossible » laisserait croire a un defaut de l'outil.
+    Sans limite de jambes, c'est la cote de tous les favoris eligibles du jour :
+    le plus haut que le combine du jour puisse atteindre.
     """
     plafond = 1.0
-    for selection in sorted(candidats, key=lambda s: s.p_marche, reverse=True)[:15]:
+    for selection in sorted(candidats, key=lambda s: s.p_marche, reverse=True)[
+        :MAX_JAMBES_COMBINE_JOUR
+    ]:
         plafond *= selection.cote
     return round(plafond, 2)
 
@@ -963,11 +1005,16 @@ def combine_du_jour(cible: float = 9.0, mise: float = 10.0,
     # le meilleur empilement possible informe ; refuser de repondre ressemblerait
     # a une panne.
     combine = quotidien_module.combine_vers(
-        candidats, cible=cible, mise=mise, au_mieux=True)
+        candidats, cible=cible, mise=mise,
+        maximum_jambes=MAX_JAMBES_COMBINE_JOUR, au_mieux=True)
     if combine is None:
-        return {"erreur": f"Impossible d'atteindre x{cible:.0f} avec les "
-                          f"{len(candidats)} favori(s) en cache sans depasser 15 matchs. "
-                          "Rafraichis les cotes, ou vise un gain plus modeste.",
+        # L'objectif est annonce en euros d'abord : c'est ce que l'utilisateur a
+        # saisi. La cote n'en est que le quotient, et « x9 » pour un x9.3 demande
+        # ferait douter du chiffre affiche.
+        return {"erreur": f"Impossible d'atteindre {cible * mise:.0f} EUR de gain "
+                          f"(x{round(cible, 2):g}), meme en empilant les {len(candidats)} "
+                          "favori(s) en cache. Rafraichis les cotes, "
+                          "ou demande un gain plus modeste.",
                 "jour": jour}
 
     annee = combine.sur_une_annee()
@@ -977,6 +1024,7 @@ def combine_du_jour(cible: float = 9.0, mise: float = 10.0,
         "jours_couverts": jours_couverts,
         "objectif_atteint": combine.objectif_atteint,
         "cote_maximale": _cote_maximale(candidats),
+        "maximum_jambes": MAX_JAMBES_COMBINE_JOUR,
         "candidats_du_jour": len(candidats),
         "marches_melanges": etendus,
         "cible": cible, "mise": combine.mise, "gain": combine.gain,
@@ -997,6 +1045,95 @@ def combine_du_jour(cible: float = 9.0, mise: float = 10.0,
             "p_marche": j.p_marche, "cote": j.cote, "bookmaker": j.bookmaker,
             "date": str(j.date),
         } for j in combine.jambes],
+    }
+
+
+# Les trois combines « prets » de l'onglet Equipes fortes. Trois objectifs
+# fixes plutot qu'un curseur : c'est l'onglet de celui qui veut une reponse
+# toute faite, le reglage fin reste dans « Combine du jour ».
+PROFILS_COMBINE = (("Prudent", 2.0), ("Equilibre", 4.0), ("Audacieux", 8.0))
+
+
+def _coup_d_envoi(date_match: Any) -> pd.Timestamp:
+    """Instant UTC du match ; une date sans fuseau est lue comme UTC (The Odds API)."""
+    instant = pd.Timestamp(date_match)
+    return instant.tz_localize("UTC") if instant.tzinfo is None else instant
+
+
+def _jambe(s: quotidien_module.Selection) -> dict:
+    return {"championnat": s.championnat, "dom": s.dom, "ext": s.ext,
+            "selection": s.selection, "equipe": s.equipe,
+            "p_marche": s.p_marche, "cote": s.cote, "bookmaker": s.bookmaker,
+            "nb_bookmakers": s.nb_bookmakers,
+            # ISO avec un « T » : `new Date()` refuse l'espace sous Firefox.
+            "date": pd.Timestamp(s.date).isoformat()}
+
+
+def equipes_fortes(jour: str | None = None, mise: float = 10.0) -> dict:
+    """Les grands favoris du marche et trois combines prets, pour une journee.
+
+    « Fort » veut dire que le marche donne au favori au moins
+    `quotidien.SEUIL_PROBABILITE` — jamais qu'il gagnera. Chaque ligne porte
+    donc sa frequence de defaite, et chaque combine sa probabilite jointe.
+    Cache uniquement : ouvrir cet onglet ne consomme aucun credit API.
+    """
+    par_championnat = {}
+    for code in config.CHAMPIONNATS_AVEC_COTES:
+        cotes, age = cotes_module.lire_cache(code)
+        if not cotes.empty and age is not None:
+            par_championnat[code] = cotes
+    if not par_championnat:
+        return {"erreur": "Aucune cote en cache. Utilise « Rafraichir les cotes »."}
+
+    # Prime non exigee : on classe des favoris par probabilite, pas par prix.
+    fortes = quotidien_module.du_jour(par_championnat, prime_minimale=0.0)
+    # Le cache garde des matchs deja joues : un combine « pret » ne peut pas
+    # contenir une rencontre dont le coup d'envoi est passe.
+    maintenant = pd.Timestamp.now(tz="UTC")
+    fortes = [s for s in fortes if _coup_d_envoi(s.date) > maintenant]
+    if jour is not None:
+        fortes = [s for s in fortes if _jour_local(s.date) == jour]
+    fortes.sort(key=lambda s: s.p_marche, reverse=True)
+    if not fortes:
+        return {"erreur": f"Aucune equipe a plus de "
+                          f"{quotidien_module.SEUIL_PROBABILITE:.0%} selon le marche "
+                          f"{_libelle_jour(jour)}. Choisis un autre jour, "
+                          "ou rafraichis les cotes.",
+                "jour": jour}
+
+    combines, deja_vus = [], set()
+    for nom, cible in PROFILS_COMBINE:
+        combine = quotidien_module.combine_vers(
+            fortes, cible=cible, mise=mise, maximum_jambes=MAX_JAMBES_COMBINE_JOUR)
+        if combine is None:
+            continue
+        # Une journee pauvre donne parfois le meme empilement pour deux
+        # objectifs : le montrer deux fois sous deux noms serait trompeur.
+        cle = tuple((str(j.date), j.dom, j.ext) for j in combine.jambes)
+        if cle in deja_vus:
+            continue
+        deja_vus.add(cle)
+        combines.append({
+            "nom": nom, "cible": cible, "mise": combine.mise, "gain": combine.gain,
+            "cote_totale": combine.cote_totale,
+            "probabilite": combine.probabilite,
+            "une_fois_sur": combine.une_fois_sur,
+            "marge_payee": combine.marge_payee,
+            "esperance": combine.esperance,
+            "jambes": [_jambe(j) for j in combine.jambes],
+        })
+
+    return {
+        "jour": jour,
+        "jours_couverts": sorted({_jour_local(s.date) for s in fortes}),
+        "seuil": quotidien_module.SEUIL_PROBABILITE,
+        "roi_mesure": quotidien_module.ROI_MESURE,
+        "roi_ic": list(quotidien_module.ROI_IC),
+        "roi_nb_paris": quotidien_module.ROI_NB_PARIS,
+        "mise": mise,
+        "fortes": [_jambe(s) | {"perd_une_fois_sur": 1.0 / max(1e-9, 1.0 - s.p_marche)}
+                   for s in fortes],
+        "combines": combines,
     }
 
 
@@ -1050,6 +1187,21 @@ def _message_erreur(erreur: Exception) -> str:
     return f"{type(erreur).__name__} : {erreur}"
 
 
+def _sans_nan(valeur: Any) -> Any:
+    """NaN et infinis en None : json.dumps les ecrit tels quels, JSON.parse les refuse.
+
+    Un championnat sans colonne de corners (ou une case vide) donne un NaN
+    pandas, qui faisait tomber toute la reponse cote navigateur.
+    """
+    if isinstance(valeur, float):
+        return valeur if math.isfinite(valeur) else None
+    if isinstance(valeur, dict):
+        return {cle: _sans_nan(v) for cle, v in valeur.items()}
+    if isinstance(valeur, (list, tuple)):
+        return [_sans_nan(v) for v in valeur]
+    return valeur
+
+
 class Gestionnaire(BaseHTTPRequestHandler):
     """Quatre routes : la page, la liste des championnats, l'etat, le rafraichissement."""
 
@@ -1059,6 +1211,8 @@ class Gestionnaire(BaseHTTPRequestHandler):
         route = urlparse(self.path)
         if route.path == "/":
             self._page()
+        elif route.path in STATIQUES:
+            self._statique(*STATIQUES[route.path])
         elif route.path == "/api/championnats":
             self._json(200, {"championnats": championnats()})
         elif route.path == "/api/apis":
@@ -1081,6 +1235,24 @@ class Gestionnaire(BaseHTTPRequestHandler):
             etendus = parametres.get("etendus", ["0"])[0] in ("1", "true", "oui")
             try:
                 self._json(200, combine_du_jour(cible, mise, jour, etendus))
+            except Exception as souci:            # jamais une connexion coupee
+                _journal.warning("%s : %s", type(souci).__name__, souci)
+                self._json(500, {"erreur": _message_erreur(souci)})
+        elif route.path == "/api/equipes-fortes":
+            parametres = parse_qs(route.query)
+            try:
+                mise = float(parametres.get("mise", ["10"])[0])
+            except ValueError:
+                mise = 0.0
+            if mise <= 0:
+                self._json(400, {"erreur": "Mise illisible."})
+                return
+            jour, erreur = _jour_demande(parametres)
+            if erreur:
+                self._json(400, {"erreur": erreur})
+                return
+            try:
+                self._json(200, equipes_fortes(jour, mise))
             except Exception as souci:            # jamais une connexion coupee
                 _journal.warning("%s : %s", type(souci).__name__, souci)
                 self._json(500, {"erreur": _message_erreur(souci)})
@@ -1111,6 +1283,14 @@ class Gestionnaire(BaseHTTPRequestHandler):
             self._json(500, {"erreur": f"Page introuvable : {PAGE}"})
             return
         self._envoyer(200, "text/html; charset=utf-8", contenu)
+
+    def _statique(self, nom: str, type_mime: str) -> None:
+        try:
+            contenu = (DOSSIER_WEB / nom).read_bytes()
+        except OSError:
+            self._json(404, {"erreur": f"Fichier introuvable : {nom}"})
+            return
+        self._envoyer(200, type_mime, contenu)
 
     def _etat(self, parametres: dict[str, list[str]], forcer: bool) -> None:
         championnat = (parametres.get("championnat", ["F1"])[0] or "F1").upper()
@@ -1173,7 +1353,8 @@ class Gestionnaire(BaseHTTPRequestHandler):
     # -- envoi -------------------------------------------------------------
 
     def _json(self, code: int, charge: dict) -> None:
-        corps = json.dumps(charge, ensure_ascii=False, default=str).encode("utf-8")
+        corps = json.dumps(_sans_nan(charge), ensure_ascii=False, default=str,
+                           allow_nan=False).encode("utf-8")
         self._envoyer(code, "application/json; charset=utf-8", corps)
 
     def _envoyer(self, code: int, type_mime: str, corps: bytes) -> None:
@@ -1192,11 +1373,30 @@ class Gestionnaire(BaseHTTPRequestHandler):
         _journal.info("%s %s", self.address_string(), format % args)
 
 
-def servir(port: int = PORT, ouvrir: bool = False) -> None:
-    serveur = ThreadingHTTPServer((HOTE, port), Gestionnaire)
+def adresse_locale() -> str | None:
+    """L'adresse du PC sur le reseau local, celle que le telephone doit viser."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(("192.0.2.1", 80))       # aucun paquet n'est envoye
+            return s.getsockname()[0]
+        except OSError:
+            return None
+
+
+def servir(port: int = PORT, ouvrir: bool = False, reseau: bool = False) -> None:
+    hote = "0.0.0.0" if reseau else HOTE
+    serveur = ThreadingHTTPServer((hote, port), Gestionnaire)
     adresse = f"http://{HOTE}:{port}"
     print(f"foot_edge — consultation sur {adresse}")
-    print("  Ctrl+C pour arreter. Rien n'est expose au reseau.")
+    if reseau:
+        ip = adresse_locale()
+        print(f"  Sur le telephone (meme Wi-Fi) : http://{ip or '<ip-du-pc>'}:{port}")
+        print(f"  Application Android : http://{ip or '<ip-du-pc>'}:{port}/RAB3OUNSTAT.apk")
+        print("  Attention : toute machine du reseau local peut ouvrir la page")
+        print("  et lancer un rafraichissement des cotes (credits API).")
+        print("  Ctrl+C pour arreter.")
+    else:
+        print("  Ctrl+C pour arreter. Rien n'est expose au reseau.")
     if ouvrir:
         threading.Timer(0.5, lambda: webbrowser.open(adresse)).start()
     try:
@@ -1212,11 +1412,13 @@ def main(arguments: list[str] | None = None) -> int:
     analyseur.add_argument("--port", "-p", type=int, default=PORT)
     analyseur.add_argument("--ouvrir", "-o", action="store_true",
                            help="ouvrir le navigateur au demarrage")
+    analyseur.add_argument("--reseau", "-r", action="store_true",
+                           help="ecouter sur le reseau local (telephone)")
     analyseur.add_argument("--verbeux", "-v", action="store_true")
     args = analyseur.parse_args(arguments)
     logging.basicConfig(level=logging.INFO if args.verbeux else logging.WARNING,
                         format="%(message)s")
-    servir(args.port, args.ouvrir)
+    servir(args.port, args.ouvrir, args.reseau)
     return 0
 
 

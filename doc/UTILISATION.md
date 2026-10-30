@@ -424,8 +424,11 @@ La page montre, pour le championnat choisi :
 ### Choisir un jour
 
 Le selecteur **Jour** en haut filtre les matchs et les selections sur une seule
-journee. « Tous les jours » montre tout ce que le flux de cotes connait, en
-general la semaine a venir.
+journee. Les donnees affichees sont limitees a la semaine locale en cours :
+d'aujourd'hui a dimanche inclus. Les journees passees et la semaine suivante
+n'apparaissent pas. « Tous les jours » montre toutes les journees restantes de
+cette semaine. Pour recuperer les dernieres cotes, clique sur « Rafraichir les
+cotes » ; recharger la page seule lit le cache existant.
 
 ### Toutes les ligues d'un coup
 

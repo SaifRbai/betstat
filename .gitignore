@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.png
+!web/icones/*.png
+!android/res/**/*.png
+android/build/
+public/

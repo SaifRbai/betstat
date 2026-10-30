@@ -272,3 +272,18 @@ def test_le_melange_garde_la_selection_la_plus_probable() -> None:
 def test_des_cotes_vides_ne_plantent_pas() -> None:
     assert quotidien.candidats_multi(pd.DataFrame(), "F1") == []
     assert quotidien.du_jour_multi({"F1": pd.DataFrame()}) == []
+
+
+def test_sans_limite_le_combine_depasse_quinze_jambes():
+    """`maximum_jambes=None` : on empile jusqu'a l'objectif, meme au-dela de 15."""
+    favoris = [
+        quotidien.Selection(
+            date="2026-10-10", championnat="F1", dom=f"E{i}", ext="X",
+            selection="1", equipe=f"E{i}", p_marche=0.9, cote=1.1, bookmaker="book",
+            cote_mediane=1.1, prime=0, nb_bookmakers=10, esperance=0,
+        )
+        for i in range(30)
+    ]
+    combine = quotidien.combine_vers(favoris, cible=9.0, maximum_jambes=None)
+    assert combine is not None and combine.objectif_atteint
+    assert len(combine.jambes) == 24                # 1.1 ** 24 = 9.85

@@ -2,7 +2,16 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Application installable sur telephone : « Ajouter a l'ecran d'accueil ». -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1b5e20">
+<link rel="icon" href="icones/icone-192.png">
+<link rel="apple-touch-icon" href="icones/icone-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RAB3OUNSTAT">
 <title>RAB3OUNSTAT — les matchs a venir</title>
 <style>
   :root {
@@ -41,6 +50,7 @@
     background: color-mix(in srgb, var(--fond) 88%, transparent);
     backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--trait);
+    padding-top: env(safe-area-inset-top);    /* encoche, une fois installee */
     transition: box-shadow .2s ease;
   }
   .nav-site.detachee { box-shadow: 0 2px 14px rgba(0,0,0,.10); }
@@ -303,11 +313,6 @@
   .reglage-valeur {
     color: var(--encre); font-weight: 700; font-variant-numeric: tabular-nums;
   }
-  .reglage-gain {
-    font-size: 22px; font-weight: 700; line-height: 1.1;
-    transition: color .25s ease;
-  }
-  .reglage-gain.change { color: var(--accent); }
   .champ-euro { position: relative; }
   .champ-euro input { width: 108px; padding-right: 34px; }
   .champ-euro::after {
@@ -503,6 +508,34 @@
     color: var(--doux); font-size: 12px;
   }
   footer p { margin: 4px 0; }
+
+  /* --- Telephone -----------------------------------------------------------
+     Une colonne, des cibles tactiles d'au moins 40 px, les onglets sur une
+     seule ligne qui defile au doigt plutot que sur trois lignes empilees qui
+     mangeraient la moitie de l'ecran. Les marges d'encoche (safe-area) ne
+     comptent qu'une fois l'application installee en plein ecran. */
+  @media (max-width: 640px) {
+    body { font-size: 14px; }
+    .nav-centre { padding: 8px 12px; gap: 8px; }
+    .onglets {
+      margin-left: 0; width: 100%; flex-wrap: nowrap; overflow-x: auto;
+      scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    }
+    .onglets::-webkit-scrollbar { display: none; }
+    .onglet { flex: none; padding: 9px 12px; }
+    .contenu {
+      padding: 12px max(12px, env(safe-area-inset-right))
+               calc(40px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    }
+    .match { grid-template-columns: 48px 1fr; gap: 8px 10px; padding: 10px 12px; }
+    .match > :nth-child(3) { grid-column: 1 / -1; }   /* la barre 1N2 */
+    .secondaire { flex-wrap: wrap; gap: 4px 12px; }
+    select, input, button { min-height: 40px; }
+    input[type=number] { width: 88px; }
+    .reglage.grandit { min-width: 0; }
+    .chiffresCle div { min-width: 0; }
+    td.reserve { min-width: 150px; }
+  }
 </style>
 </head>
 <body>
@@ -522,6 +555,8 @@
         Opportunites <span class="pastille" id="n-opportunites"></span></button>
       <button class="onglet" role="tab" data-vue="combine-jour" aria-selected="false">
         Combine du jour <span class="pastille" id="n-combine"></span></button>
+      <button class="onglet" role="tab" data-vue="fortes" aria-selected="false">
+        Equipes fortes <span class="pastille" id="n-fortes"></span></button>
       <button class="onglet" role="tab" data-vue="apis" aria-selected="false">
         Cles API</button>
     </div>
@@ -559,6 +594,9 @@
 
   <div class="vue active" data-vue="matchs">
   <section id="section-matchs" data-principale hidden>
+    <!-- Vue « Aujourd'hui — toutes ligues » seulement : les combines prets du
+         jour, les memes que dans l'onglet Equipes fortes. -->
+    <div id="combines-aujourdhui" hidden></div>
     <h2><span id="titre-matchs">Matchs a venir</span> <span class="compte" id="compte-matchs"></span></h2>
     <div id="matchs"></div>
     <div id="rapport-ligues" class="progression" hidden></div>
@@ -607,6 +645,16 @@
       <label for="mise">Mise</label>
       <div class="champ-euro"><input type="number" id="mise" value="10" min="1" step="5"></div>
     </div>
+    <div class="reglage">
+      <!-- Les deux chiffres qu'on a en tete avant de parier : ce qu'on engage et
+           ce qu'on veut recuperer. L'objectif de cote n'en est que le quotient,
+           il se deduit au lieu de se regler. « minimum » et non « vise » : quand
+           l'objectif depasse ce que la journee permet, le combine propose
+           rapporte moins, et le panneau le dit. -->
+      <label for="gain-minimum">Gain minimum</label>
+      <div class="champ-euro"><input type="number" id="gain-minimum" value="90" min="1" step="10"></div>
+      <div class="note-cout" id="gain-note"></div>
+    </div>
     <div class="reglage grandit">
       <label for="cible">Objectif <span class="reglage-valeur" id="cible-libelle">x9</span></label>
       <input type="range" id="cible" class="curseur" min="0" max="100" value="43">
@@ -618,13 +666,6 @@
         <span>Melanger 1X / GG / NG</span></label>
       <div class="note-cout" id="cout-etendus"></div>
     </div>
-    <div class="reglage">
-      <!-- « vise » et non « si tout passe » : quand l'objectif depasse ce que
-           la journee permet, le combine reellement propose rapporte moins. Le
-           chiffre obtenu est celui du panneau, pas celui-ci. -->
-      <label>Gain vise</label>
-      <div class="reglage-gain" id="gain-projete">90 EUR</div>
-    </div>
   </div>
   <section id="section-combine-jour" data-principale hidden>
     <h2>Combine du jour <span class="compte" id="compte-combine-jour"></span></h2>
@@ -632,6 +673,23 @@
   </section>
     <p class="vue-vide">Clique sur <strong>Combine du jour</strong> pour empiler les
       favoris de la journee choisie jusqu'a l'objectif de gain.</p>
+  </div>
+
+  <div class="vue" data-vue="fortes">
+  <section id="section-fortes" data-principale hidden>
+    <h2>Equipes fortes <span class="compte" id="compte-fortes"></span></h2>
+    <!-- « Forte » est un fait de marche (probabilite elevee), jamais une
+         promesse de resultat : chaque ligne dit combien de fois elle perd. -->
+    <p class="note" style="margin: -6px 2px 10px;">
+      Les favoris auxquels le marche donne les plus grandes chances, et trois
+      combines prets a jouer construits avec eux. Un favori a 80 % perd
+      <strong>une fois sur cinq</strong> : chaque carte affiche sa frequence de
+      defaite, chaque combine sa probabilite reelle que tout passe.
+    </p>
+    <div id="fortes-panneau" class="panneau"></div>
+  </section>
+    <p class="vue-vide">Ouvre cet onglet apres avoir choisi un jour : les favoris
+      et les combines prets s'affichent ici.</p>
   </div>
 
   <div class="vue" data-vue="apis">
@@ -658,6 +716,57 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+// --- Version publiee ------------------------------------------------------
+// publier.py ecrit chaque reponse /api/ dans un fichier et pose
+// FOOT_EDGE_STATIQUE en tete de ce script. La page reste la meme : seul
+// `fetch` est detourne vers ces fichiers. Ce qui demande un calcul a la
+// volee (rafraichir, combine personnalise, mise ou bankroll libres) n'existe
+// pas dans une photographie, et le dit au lieu d'afficher un chiffre faux.
+const STATIQUE = window.FOOT_EDGE_STATIQUE || null;
+// L'application Android ajoute ce marqueur a son user-agent.
+const DANS_L_APP = navigator.userAgent.includes("RAB3OUNSTAT-App");
+
+// Meme regle que `cle()` dans publier.py : les deux doivent rester identiques.
+function cleStatique(url) {
+  let nom = url.pathname.replace(/^.*\/api\//, "");
+  const paires = [...url.searchParams]
+    .filter(([k]) => k !== "bankroll" && k !== "mise")
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const [k, v] of paires) nom += `__${k}-${v}`;
+  return nom.replace(/[^A-Za-z0-9_.-]/g, "_") + ".json";
+}
+
+if (STATIQUE) {
+  const fetchReseau = window.fetch.bind(window);
+  const repondre = (code, charge) => new Response(JSON.stringify(charge),
+    { status: code, headers: { "Content-Type": "application/json" } });
+  window.fetch = async (adresse, options = {}) => {
+    const url = new URL(adresse, location.href);
+    if (!url.pathname.includes("/api/")) return fetchReseau(adresse, options);
+    if ((options.method || "GET").toUpperCase() !== "GET") {
+      return repondre(403, { erreur: "Version publiee, en lecture seule : les cotes "
+        + "sont rafraichies automatiquement chaque matin. Le rafraichissement a la "
+        + "demande et le combine personnalise demandent le PC (python web.py --reseau)." });
+    }
+    const p = url.searchParams;
+    if (p.has("cible")) {
+      // Le palier publie le plus proche, en rapport et non en ecart : x2 est
+      // plus pres de x3 que x9 ne l'est de x15.
+      const voulu = Number(p.get("cible"));
+      const proche = STATIQUE.cibles.reduce((a, b) =>
+        Math.abs(Math.log(b / voulu)) < Math.abs(Math.log(a / voulu)) ? b : a);
+      p.set("cible", String(proche));
+    }
+    if (p.has("etendus")) p.set("etendus", "0");
+    const reponse = await fetchReseau("donnees/" + cleStatique(url), { cache: "no-cache" });
+    if (!reponse.ok) {
+      return repondre(404, { erreur: "Rien de publie pour ce choix : la photographie "
+        + `couvre les ${STATIQUE.jours.length} prochains jours de match.` });
+    }
+    return reponse;
+  };
+}
 const pourcent = (x) => (x * 100).toFixed(1) + " %";
 const signe = (x) => (x >= 0 ? "+" : "") + (x * 100).toFixed(1) + " %";
 
@@ -1585,6 +1694,7 @@ function afficher(etat) {
   remplirJours(etat.matchs, etat.ecartes);
   $("jour").disabled = Boolean(etat.jour);
   afficherRapportLigues(etat.ligues);
+  afficherCombinesAujourdhui(etat.jour || null);
   filtrer();
   $("section-matchs").hidden = false;
   $("quota").textContent = etat.quota;
@@ -1770,23 +1880,54 @@ const coteVersCurseur = (c) =>
   100 * (Math.log(Math.max(CIBLE_MIN, Math.min(CIBLE_MAX, c))) - Math.log(CIBLE_MIN))
       / (Math.log(CIBLE_MAX) - Math.log(CIBLE_MIN));
 
-const cibleChoisie = () => {
-  const brut = curseurVersCote(Number($("cible").value));
-  return brut < 10 ? Math.round(brut * 2) / 2 : Math.round(brut);   // pas de x9.37
-};
-const miseChoisie = () => Math.max(1, Number($("mise").value) || 10);
+// Trois reglages pour deux inconnues : l'objectif de cote vaut gain minimum /
+// mise, il ne se regle pas independamment des deux autres. On garde donc une
+// seule verite, CIBLE, et chaque commande la recalcule a sa maniere : le
+// curseur la fixe et rend le gain, le gain et la mise la deduisent. Sans ce
+// point unique, les champs finiraient par afficher deux objectifs differents.
+const CIBLE_PLAFOND = 1000;      // borne haute acceptee par /api/combine-du-jour
+let CIBLE = 9;
 
-// Le libelle et le gain projete suivent le curseur immediatement, sans attendre
-// le serveur : c'est ce qui donne la sensation de reglage continu.
+const cibleChoisie = () => CIBLE;
+const fmtCible = (v) => v % 1 ? v.toFixed(1) : v.toFixed(0);
+const miseChoisie = () => Math.max(1, Number($("mise").value) || 10);
+const gainDemande = () => Math.max(0, Number($("gain-minimum").value) || 0);
+const borner = (c) => Math.min(CIBLE_PLAFOND, Math.max(CIBLE_MIN, c));
+
+// Depuis le gain : aucun arrondi vers le bas. Le chiffre saisi est un minimum,
+// ramener x9.3 a x9 rendrait un combine qui rapporte moins que le demande.
+function cibleDepuisGain() {
+  CIBLE = borner(gainDemande() / miseChoisie());
+  $("cible").value = coteVersCurseur(CIBLE);
+  rafraichirReglages();
+}
+
+// Depuis le curseur : l'objectif devient rond (pas de x9.37), et c'est le gain
+// minimum qui suit.
+function cibleDepuisCurseur() {
+  const brut = curseurVersCote(Number($("cible").value));
+  CIBLE = brut < 10 ? Math.round(brut * 2) / 2 : Math.round(brut);
+  $("gain-minimum").value = (CIBLE * miseChoisie()).toFixed(0);
+  rafraichirReglages();
+}
+
+// Le libelle et la note suivent la main immediatement, sans attendre le
+// serveur : c'est ce qui donne la sensation de reglage continu.
 function rafraichirReglages() {
-  const cible = cibleChoisie();
   const mise = miseChoisie();
-  $("cible-libelle").textContent = "x" + (cible % 1 ? cible.toFixed(1) : cible);
-  const gain = $("gain-projete");
-  gain.textContent = (mise * cible).toFixed(0) + " EUR";
-  gain.classList.add("change");
-  clearTimeout(rafraichirReglages.minuterie);
-  rafraichirReglages.minuterie = setTimeout(() => gain.classList.remove("change"), 260);
+  $("cible-libelle").textContent = "x" + (CIBLE % 1 ? CIBLE.toFixed(1) : CIBLE);
+  // Une saisie hors bornes n'est pas corrigee en silence : on annonce ce qui
+  // sera reellement demande au serveur.
+  const demande = gainDemande();
+  const note = $("gain-note");
+  if (demande < CIBLE_MIN * mise) {
+    note.textContent =
+      `sous x${CIBLE_MIN} : calcule pour ${(CIBLE_MIN * mise).toFixed(0)} EUR`;
+  } else if (demande > CIBLE_PLAFOND * mise) {
+    note.textContent = `plafonne a ${(CIBLE_PLAFOND * mise).toFixed(0)} EUR`;
+  } else {
+    note.textContent = "";
+  }
 }
 
 // Un recalcul par reglage serait une requete par cran de curseur. On attend que
@@ -1855,14 +1996,16 @@ async function afficherCombineDuJour() {
         }</div>
         <div class="jauge-legende">
           <span>${c.jambes.length} match(s) empile(s)</span>
-          <span>objectif x${c.cible.toFixed(0)}</span>
+          <span>objectif ${(c.mise * c.cible).toFixed(0)} EUR (x${fmtCible(c.cible)})</span>
         </div>
       </div>
       ${court ? `<div class="verdict mauvais">
-        <strong>&#9888; Objectif x${c.cible.toFixed(0)} hors d'atteinte ${quand.toLowerCase()}.</strong>
-        Le maximum en empilant les ${c.candidats_du_jour} favori(s) eligible(s)
-        est <strong>x${c.cote_maximale.toFixed(2)}</strong>. Vise un gain plus
-        modeste, ou choisis une journee mieux fournie.</div>` : ""}
+        <strong>&#9888; Gagner ${(c.mise * c.cible).toFixed(0)} EUR avec ${c.mise.toFixed(0)} EUR
+        de mise (x${fmtCible(c.cible)}) est hors d'atteinte ${quand.toLowerCase()}.</strong>
+        Meme en empilant les ${c.candidats_du_jour} favoris eligibles, le combine atteint
+        <strong>x${c.cote_maximale.toFixed(2)}</strong>, soit
+        <strong>${(c.mise * c.cote_maximale).toFixed(0)} EUR</strong>. Demande un gain
+        plus modeste, augmente la mise, ou choisis une journee mieux fournie.</div>` : ""}
       <div class="tuiles">
         <div class="tuile"><div class="valeur" id="cj-proba">${pourcent(c.probabilite)}</div>
           <div class="clef">Chances que tout passe</div></div>
@@ -1891,7 +2034,7 @@ async function afficherCombineDuJour() {
           ${a.retour_attendu.toFixed(0)} EUR attendus en retour, gagnant environ
           ${Math.round(a.jours_gagnants)} jours sur ${a.jours}.
           <br>L'alternative en pari simple — une seule selection cotee
-          ${c.cible.toFixed(0)} — est pire : ${signe(c.roi_pari_simple)} mesures sur
+          ${fmtCible(c.cible)} — est pire : ${signe(c.roi_pari_simple)} mesures sur
           ${c.roi_pari_simple_n} paris, intervalle
           [${signe(c.roi_pari_simple_ic[0])}, ${signe(c.roi_pari_simple_ic[1])}].
           C'est la seule bande de cotes dont la perte soit statistiquement etablie.
@@ -1965,6 +2108,121 @@ async function afficherApis() {
   }
 }
 
+// L'onglet Equipes fortes : les plus grands favoris du marche pour le jour
+// choisi, et trois combines prets (x2, x4, x8). Meme source que le combine du
+// jour — le cache des cotes — donc aucun credit API consomme.
+let jetonFortes = 0;
+
+function carteFavori(j, index) {
+  return `
+    <div class="jambe-carte" style="--i:${index}">
+      <div class="duo"><span class="ligue">${j.championnat}</span>${j.dom} - ${j.ext}</div>
+      <div class="choix">${j.equipe}</div>
+      <div class="bas"><span>marche ${pourcent(j.p_marche)}</span>
+        <span class="prix">${j.cote.toFixed(2)}</span></div>
+      <div class="bas"><span>${libelleJour(j.date)}</span><span>${j.bookmaker}</span></div>
+      ${j.perd_une_fois_sur ? `<div class="bas"><span>perd environ 1 fois sur
+        ${j.perd_une_fois_sur.toFixed(1)}</span></div>` : ""}
+    </div>`;
+}
+
+async function afficherEquipesFortes() {
+  const section = $("section-fortes");
+  const bloc = $("fortes-panneau");
+  const jour = jourDuCombine();
+  const jeton = ++jetonFortes;
+  section.hidden = false;
+  if (bloc.firstElementChild) bloc.classList.add("squelette");
+  else bloc.innerHTML = '<div class="note squelette">Calcul...</div>';
+  try {
+    const reponse = await fetch(`/api/equipes-fortes?mise=${miseChoisie()}`
+      + `&jour=${encodeURIComponent(jour)}`);
+    const f = await reponse.json();
+    if (jeton !== jetonFortes) return;
+    bloc.classList.remove("squelette");
+    if (f.erreur) {
+      bloc.innerHTML = `<div class="verdict mauvais">${f.erreur}</div>`;
+      $("compte-fortes").textContent = "";
+      pastille("n-fortes", 0);
+      return;
+    }
+    const quand = f.jours_couverts.length === 1
+      ? libelleJour(f.jours_couverts[0] + "T12:00:00")
+      : `${f.jours_couverts.length} journees`;
+    $("compte-fortes").textContent = `— ${f.fortes.length} favoris, ${quand.toLowerCase()}`;
+    pastille("n-fortes", f.fortes.length);
+
+    bloc.innerHTML = `
+      <h3>Combines prets</h3>
+      ${htmlCombinesPrets(f.combines)}
+      <h3>Tous les favoris a plus de ${pourcent(f.seuil)}</h3>
+      <div class="jambes-grille">${f.fortes.map((j, i) => carteFavori(j, i)).join("")}</div>
+      ${noteFavoris(f)}`;
+  } catch (souci) {
+    if (jeton !== jetonFortes) return;
+    bloc.classList.remove("squelette");
+    bloc.innerHTML = `<div class="verdict mauvais">Serveur injoignable : ${souci.message}</div>`;
+  }
+}
+
+// Ce que vaut reellement la regle, sous chaque affichage de favoris : un combine
+// pret sans sa mesure se lirait comme une recommandation.
+function noteFavoris(f) {
+  return `<div class="note">
+        Probabilites issues du <strong>marche</strong> (cotes de-viggees), pas du
+        modele. Parier ces favoris un par un a rendu ${signe(f.roi_mesure)} par pari
+        sur ${f.roi_nb_paris} paris mesures, intervalle a 95 %
+        [${signe(f.roi_ic[0])}, ${signe(f.roi_ic[1])}] : l'intervalle contient zero,
+        aucun gain n'est demontre. Un combine multiplie les marges des bookmakers.
+        Aucun credit API consomme.
+      </div>`;
+}
+
+function htmlCombinesPrets(liste) {
+  return liste.length ? liste.map((c) => `
+      <div class="combine-hero">
+        <div class="ligne">
+          <div class="trajet"><strong>${c.nom}</strong> — ${c.mise.toFixed(0)} EUR pour en
+            gagner <strong>${c.gain.toFixed(2)}</strong></div>
+          <div class="cote"><small>x</small>${c.cote_totale.toFixed(2)}</div>
+        </div>
+        <div class="jauge-legende">
+          <span>${c.jambes.length} match(s) — passe ${pourcent(c.probabilite)} du temps,
+            environ 1 fois sur ${Math.round(c.une_fois_sur)}</span>
+          <span>marge payee ${pourcent(c.marge_payee)}, esperance ${signe(c.esperance)}</span>
+        </div>
+        <div class="jambes-grille" style="margin-top:10px">${
+          c.jambes.map((j, i) => carteFavori(j, i)).join("")}</div>
+      </div>`).join("")
+      : `<div class="note">Pas assez de favoris pour atteindre x2 sur cette journee.</div>`;
+}
+
+// Les combines prets en tete de la vue « Aujourd'hui — toutes ligues ». Masque
+// dans toute autre vue : un championnat seul n'est pas « la journee ».
+let jetonAujourdhui = 0;
+
+async function afficherCombinesAujourdhui(jour) {
+  const bloc = $("combines-aujourdhui");
+  const jeton = ++jetonAujourdhui;
+  if (!jour) { bloc.hidden = true; bloc.innerHTML = ""; return; }
+  bloc.hidden = false;
+  bloc.innerHTML = '<h2>Combines prets du jour</h2><div class="note squelette">Calcul...</div>';
+  try {
+    const reponse = await fetch(`/api/equipes-fortes?mise=${miseChoisie()}`
+      + `&jour=${encodeURIComponent(jour)}`);
+    const f = await reponse.json();
+    if (jeton !== jetonAujourdhui) return;
+    bloc.innerHTML = `<h2>Combines prets du jour
+        <span class="compte">— ${f.erreur ? "aucun" : f.fortes.length + " favori(s) a plus de "
+          + pourcent(f.seuil)}</span></h2>`
+      + (f.erreur ? `<div class="note">${f.erreur}</div>`
+                  : htmlCombinesPrets(f.combines) + noteFavoris(f));
+  } catch (souci) {
+    if (jeton !== jetonAujourdhui) return;
+    bloc.innerHTML = `<div class="verdict mauvais">Combines indisponibles : ${souci.message}</div>`;
+  }
+}
+
 async function demarrer() {
   const reponse = await fetch("/api/championnats");
   const { championnats } = await reponse.json();
@@ -1997,12 +2255,12 @@ async function demarrer() {
   }
   const memoire = JSON.parse(localStorage.getItem("foot_edge") || "{}");
   liste.value = memoire.code || "F1";
-  if (memoire.bankroll) $("bankroll").value = memoire.bankroll;
+  if (memoire.bankroll && !STATIQUE) $("bankroll").value = memoire.bankroll;
   $("charger").addEventListener("click", () => demander(false));
   $("rafraichir").addEventListener("click", () => demander(true));
   $("combine-jour").addEventListener("click", () => afficherCombineDuJour());
-  // Le curseur ne declenche un calcul que quand la main s'arrete ; le libelle
-  // et le gain projete, eux, suivent chaque cran.
+  // Un reglage ne declenche un calcul que quand la main s'arrete ; le libelle
+  // de l'objectif et le champ jumeau, eux, suivent chaque cran.
   $("etendus").addEventListener("change", () => {
     // Le cout est annonce AVANT, pas constate apres : chaque rencontre
     // interrogee coute deux credits The Odds API, plafonnees a vingt.
@@ -2010,11 +2268,18 @@ async function demarrer() {
       ? "jusqu'a 40 credits The Odds API (2 par rencontre, 20 au plus)" : "";
     combineDifferee(50);
   });
-  $("cible").addEventListener("input", () => combineDifferee());
-  $("mise").addEventListener("input", () => combineDifferee(420));
-  rafraichirReglages();
+  $("cible").addEventListener("input", () => { cibleDepuisCurseur(); combineDifferee(); });
+  // La frappe est plus lente qu'un curseur : on laisse finir de taper « 250 »
+  // avant d'aller chercher un combine pour « 2 ».
+  $("gain-minimum").addEventListener("input", () => { cibleDepuisGain(); combineDifferee(420); });
+  // La mise change, le gain minimum reste : c'est l'objectif de cote qui bouge.
+  $("mise").addEventListener("input", () => { cibleDepuisGain(); combineDifferee(420); });
+  cibleDepuisGain();
   for (const onglet of document.querySelectorAll(".onglet")) {
-    onglet.addEventListener("click", () => montrerVue(onglet.dataset.vue));
+    onglet.addEventListener("click", () => {
+      montrerVue(onglet.dataset.vue);
+      if (onglet.dataset.vue === "fortes") afficherEquipesFortes();
+    });
   }
   // L'ombre n'apparait qu'une fois la barre decollee du haut : elle signale
   // qu'il y a du contenu au-dessus, elle ne decore pas.
@@ -2023,12 +2288,57 @@ async function demarrer() {
     navigation.classList.toggle("detachee", window.scrollY > 4);
   }, { passive: true });
   $("jour").addEventListener("change", filtrer);
+  // Changer de jour depuis l'onglet ouvert : la liste doit suivre.
+  $("jour").addEventListener("change", () => {
+    if (document.querySelector('.vue.active')?.dataset.vue === "fortes") afficherEquipesFortes();
+  });
   $("bankroll").addEventListener("change", () => CHOISIES.size && calculerCombine());
   afficherApis();
   demander(false);
 }
 
 demarrer();
+
+// Les reglages qu'une photographie ne peut pas suivre sont figes, et le
+// bandeau dit de quand datent les chiffres : c'est la premiere chose a savoir.
+function preparerModeStatique() {
+  if (!STATIQUE) return;
+  $("bankroll").value = STATIQUE.bankroll;
+  $("mise").value = STATIQUE.mise;
+  for (const id of ["bankroll", "mise", "etendus"]) $(id).disabled = true;
+  $("rafraichir").hidden = true;
+  const genere = new Date(STATIQUE.genere);
+  const bandeau = document.createElement("div");
+  bandeau.className = "bandeau";
+  bandeau.innerHTML = `<div class="chiffres">Version en ligne — calculee le ${
+    genere.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })
+    } a ${genere.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</div>
+    <p>Lecture seule, recalculee chaque matin. Mises pour une bankroll de
+    ${STATIQUE.bankroll} et une mise de ${STATIQUE.mise} EUR ; objectif du combine
+    arrondi au palier le plus proche (${STATIQUE.cibles.map((c) => "x" + c).join(", ")}).</p>`;
+  document.querySelector(".bandeau").before(bandeau);
+}
+
+// Dans l'application : de quoi changer de source (PC ou version en ligne).
+// L'adresse rab3ounstat:// est interceptee par l'application elle-meme.
+function lienSourceApplication() {
+  if (!DANS_L_APP) return;
+  const ligne = document.createElement("div");
+  ligne.className = "etat";
+  ligne.innerHTML = `Source : ${location.host}${location.pathname} · `
+    + `<a href="rab3ounstat://adresse">changer</a>`;
+  document.querySelector(".contenu").appendChild(ligne);
+}
+
+preparerModeStatique();
+lienSourceApplication();
+
+// Application installee : le service worker ne garde que la coquille de la
+// page. Absent hors contexte securise (http sur une IP du reseau) : la page
+// marche alors exactement comme avant.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
 </script>
 </body>
 </html>

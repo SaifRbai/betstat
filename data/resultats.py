@@ -1,6 +1,10 @@
 """Telechargement, cache et nettoyage des resultats football-data.co.uk.
 
 Source unique : https://www.football-data.co.uk/mmz4281/{saison}/{ligue}.csv
+et, pour les championnats joues sur l'annee civile (Bresil), le fichier unique
+https://www.football-data.co.uk/new/{ligue}.csv qui contient toutes les saisons.
+Seule exception : la Serie B bresilienne, absente de football-data.co.uk, dont
+les resultats viennent d'API-Football et sont convertis au meme format CSV.
 C'est un CSV gratuit, sans cle, qui contient scores, statistiques de match et
 cotes historiques de plusieurs bookmakers. Aucun scraping n'est effectue.
 """
@@ -20,6 +24,10 @@ import config
 _journal = logging.getLogger("foot_edge.resultats")
 
 URL_MODELE = "https://www.football-data.co.uk/mmz4281/{saison}/{ligue}.csv"
+URL_ANNEE_CIVILE = "https://www.football-data.co.uk/new/{ligue}.csv"
+# Code "saison" du fichier unique d'un championnat sur l'annee civile : il
+# contient toutes les saisons, y compris celle en cours, et perime donc comme elle.
+FICHIER_UNIQUE = "tout"
 DELAI_RESEAU = 20  # secondes
 
 # Colonnes brutes -> colonnes normalisees en francais.
@@ -45,20 +53,32 @@ _RENOMMAGE: dict[str, str] = {
     "AR": "rouges_ext",
 }
 
+# Les fichiers "new/" (championnats sur l'annee civile) nomment autrement les
+# memes colonnes ; on les ramene au format mmz4281 avant tout le reste.
+_COLONNES_FICHIER_UNIQUE: dict[str, str] = {
+    "Home": "HomeTeam",
+    "Away": "AwayTeam",
+    "HG": "FTHG",
+    "AG": "FTAG",
+    "Res": "FTR",
+}
+
 # Cotes : on prend la moyenne du marche en priorite (Avg), sinon Bet365, sinon
 # Pinnacle, sinon la meilleure cote disponible. Les colonnes "_max" gardent la
-# meilleure cote proposee, indispensable pour un backtest realiste.
+# meilleure cote proposee, indispensable pour un backtest realiste. Les cotes de
+# cloture (colonnes en "C") ne servent qu'en dernier recours : ce sont les seules
+# que publient les fichiers "new/" (Bresil).
 _COTES_MOYENNES: dict[str, tuple[str, ...]] = {
-    "cote_1": ("AvgH", "B365H", "PSH", "BWH", "MaxH"),
-    "cote_N": ("AvgD", "B365D", "PSD", "BWD", "MaxD"),
-    "cote_2": ("AvgA", "B365A", "PSA", "BWA", "MaxA"),
+    "cote_1": ("AvgH", "B365H", "PSH", "BWH", "MaxH", "AvgCH", "B365CH", "PSCH", "MaxCH"),
+    "cote_N": ("AvgD", "B365D", "PSD", "BWD", "MaxD", "AvgCD", "B365CD", "PSCD", "MaxCD"),
+    "cote_2": ("AvgA", "B365A", "PSA", "BWA", "MaxA", "AvgCA", "B365CA", "PSCA", "MaxCA"),
     "cote_plus25": ("Avg>2.5", "B365>2.5", "P>2.5", "Max>2.5"),
     "cote_moins25": ("Avg<2.5", "B365<2.5", "P<2.5", "Max<2.5"),
 }
 _COTES_MAX: dict[str, tuple[str, ...]] = {
-    "cote_1_max": ("MaxH", "B365H", "AvgH"),
-    "cote_N_max": ("MaxD", "B365D", "AvgD"),
-    "cote_2_max": ("MaxA", "B365A", "AvgA"),
+    "cote_1_max": ("MaxH", "B365H", "AvgH", "MaxCH", "B365CH", "AvgCH"),
+    "cote_N_max": ("MaxD", "B365D", "AvgD", "MaxCD", "B365CD", "AvgCD"),
+    "cote_2_max": ("MaxA", "B365A", "AvgA", "MaxCA", "B365CA", "AvgCA"),
     "cote_plus25_max": ("Max>2.5", "B365>2.5", "Avg>2.5"),
     "cote_moins25_max": ("Max<2.5", "B365<2.5", "Avg<2.5"),
 }
@@ -96,9 +116,29 @@ def dernieres_saisons(nombre: int, aujourdhui: date | None = None) -> list[str]:
     return list(reversed(codes))
 
 
+def annee_civile(ligue: str) -> bool:
+    """Ce championnat joue-t-il sa saison sur l'annee civile (Bresil) ?"""
+    return ligue.upper() in config.CHAMPIONNATS_ANNEE_CIVILE
+
+
+def dernieres_annees(nombre: int, aujourdhui: date | None = None) -> list[str]:
+    """Les `nombre` dernieres saisons civiles ("2026"), la plus ancienne d'abord.
+
+    L'annee en cours compte meme avant son coup d'envoi, comme la saison
+    europeenne en aout : elle est alors simplement vide.
+    """
+    annee = (aujourdhui or date.today()).year
+    return [str(annee - i) for i in reversed(range(max(1, nombre)))]
+
+
 # --------------------------------------------------------------------------
 # Cache et telechargement
 # --------------------------------------------------------------------------
+
+def ligue_api_football(ligue: str) -> int | None:
+    """Identifiant API-Football si ce championnat n'existe pas chez football-data."""
+    return config.CHAMPIONNATS.get(ligue.upper(), {}).get("api_football")
+
 
 def chemin_cache(ligue: str, saison: str) -> Path:
     return config.DOSSIER_CACHE_RESULTATS / f"{ligue.upper()}_{saison}.csv"
@@ -127,7 +167,7 @@ def _cache_valide(chemin: Path, saison: str) -> bool:
     with chemin.open("rb") as fichier:      # purge un cache empoisonne
         if not _ressemble_a_du_csv(fichier.read(400)):
             return False
-    if saison != saison_courante():
+    if saison not in (saison_courante(), str(date.today().year), FICHIER_UNIQUE):
         return True
     age = time.time() - chemin.stat().st_mtime
     return age < config.TTL_SAISON_COURANTE_SECONDES
@@ -140,6 +180,14 @@ class SaisonNonPubliee(ValueError):
     qu'apres les premieres journees, et pas le meme jour pour tous les
     championnats. On le distingue d'une vraie erreur reseau pour ne pas crier
     au loup a chaque chargement.
+    """
+
+
+class SaisonInaccessible(SaisonNonPubliee):
+    """La saison existe, mais l'abonnement API-Football ne la couvre pas.
+
+    Le plan gratuit refuse tout ce qui sort de 2022-2024 : rien a voir avec une
+    saison pas encore commencee, et ca ne se reglera pas tout seul.
     """
 
 
@@ -178,11 +226,17 @@ def telecharger(ligue: str, saison: str, forcer: bool = False) -> Path | None:
         _journal.info("Cache invalide retire : %s", chemin.name)
         chemin.unlink()
 
-    url = URL_MODELE.format(saison=saison, ligue=ligue.upper())
+    if saison == FICHIER_UNIQUE:
+        url = URL_ANNEE_CIVILE.format(ligue=ligue.upper())
+    else:
+        url = URL_MODELE.format(saison=saison, ligue=ligue.upper())
     try:
-        reponse = requests.get(url, timeout=DELAI_RESEAU)
-        reponse.raise_for_status()
-        contenu = reponse.content
+        if ligue_api_football(ligue):
+            contenu = _csv_api_football(ligue, saison)
+        else:
+            reponse = requests.get(url, timeout=DELAI_RESEAU)
+            reponse.raise_for_status()
+            contenu = reponse.content
         if not _ressemble_a_du_csv(contenu):
             raise SaisonNonPubliee(
                 "le fichier n'est pas encore publie sur football-data.co.uk")
@@ -190,6 +244,10 @@ def telecharger(ligue: str, saison: str, forcer: bool = False) -> Path | None:
         _chemin_absence(ligue, saison).unlink(missing_ok=True)
         _journal.info("Telecharge %s saison %s (%d octets)", ligue, saison, len(contenu))
         return chemin
+    except SaisonInaccessible as erreur:
+        _chemin_absence(ligue, saison).write_text("", encoding="utf-8")
+        _journal.warning("%s saison %s : %s", ligue, saison, erreur)
+        return None
     except SaisonNonPubliee as erreur:
         # Cas normal en debut de saison, et non une panne : on le note une fois
         # au journal detaille, et on ne redemande pas avant six heures.
@@ -214,6 +272,69 @@ def telecharger(ligue: str, saison: str, forcer: bool = False) -> Path | None:
             ligue, saison, _cause_lisible(erreur),
         )
         return None
+
+
+def _nom_api_football(nom: str) -> str:
+    """Nom d'equipe API-Football -> orthographe football-data quand elle existe.
+
+    Un club relegue de Serie A garde ainsi le meme nom dans les deux divisions,
+    ce qui permet au modele inter-divisions de s'en servir comme pont.
+    """
+    from data import noms as noms_module
+
+    canonique = noms_module.canoniser(nom, "api_football")
+    if canonique is None:
+        return str(nom).strip()
+    alias = noms_module.alias_connus(canonique, "football_data")
+    return alias[0] if alias else canonique
+
+
+def _csv_api_football(ligue: str, saison: str) -> bytes:
+    """Matchs termines d'une saison API-Football, au format CSV football-data.
+
+    Une requete par saison, comptee sur le meme quota quotidien que les
+    absences et les scores : c'est la meme cle.
+    """
+    from data import absences as absences_module
+
+    if absences_module.lire_compteur()["appels"] >= config.QUOTA_QUOTIDIEN_API_FOOTBALL:
+        raise absences_module.QuotaEpuise("quota quotidien API-Football atteint")
+    try:
+        matchs, restant = absences_module._appeler(
+            "fixtures", {"league": ligue_api_football(ligue), "season": saison})
+    except absences_module.HorsFenetre:
+        absences_module.enregistrer_appel(None)
+        raise SaisonInaccessible(
+            "l'abonnement API-Football ne couvre pas cette saison (le plan "
+            "gratuit s'arrete a 2024). Sans abonnement payant, ce championnat "
+            "n'a pas d'historique recent.") from None
+    absences_module.enregistrer_appel(restant)
+
+    lignes = []
+    for match in matchs:
+        if match["fixture"]["status"]["short"] not in ("FT", "AET", "PEN"):
+            continue
+        temps = match["score"]["fulltime"]       # score a 90 minutes
+        mi_temps = match["score"]["halftime"]
+        if temps["home"] is None or temps["away"] is None:
+            continue
+        coup_envoi = datetime.fromisoformat(match["fixture"]["date"])
+        lignes.append({
+            "Div": ligue.upper(),
+            "Date": coup_envoi.strftime("%d/%m/%Y"),
+            "Time": coup_envoi.strftime("%H:%M"),
+            "HomeTeam": _nom_api_football(match["teams"]["home"]["name"]),
+            "AwayTeam": _nom_api_football(match["teams"]["away"]["name"]),
+            "FTHG": temps["home"],
+            "FTAG": temps["away"],
+            "FTR": ("H" if temps["home"] > temps["away"]
+                    else "A" if temps["home"] < temps["away"] else "D"),
+            "HTHG": mi_temps["home"],
+            "HTAG": mi_temps["away"],
+        })
+    colonnes = ["Div", "Date", "Time", "HomeTeam", "AwayTeam",
+                "FTHG", "FTAG", "FTR", "HTHG", "HTAG"]
+    return pd.DataFrame(lignes, columns=colonnes).to_csv(index=False).encode("utf-8")
 
 
 def _cause_lisible(erreur: Exception) -> str:
@@ -270,6 +391,8 @@ def nettoyer(brut: pd.DataFrame, saison: str, ligue: str) -> pd.DataFrame:
     """Normalise un CSV football-data brut vers les colonnes du projet."""
     df = brut.copy()
     df.columns = [str(c).strip().lstrip("﻿") for c in df.columns]
+    if "HomeTeam" not in df.columns:
+        df = df.rename(columns=_COLONNES_FICHIER_UNIQUE)
 
     if "Date" not in df.columns or "HomeTeam" not in df.columns:
         return pd.DataFrame(columns=list(COLONNES_NORMALISEES))
@@ -338,11 +461,8 @@ def charger(
         raise ValueError(f"Championnat inconnu : {ligue!r}. Codes valides : {connus}")
 
     morceaux: list[pd.DataFrame] = []
-    for saison in dernieres_saisons(nb_saisons, aujourdhui):
-        chemin = telecharger(ligue, saison, forcer=forcer)
-        if chemin is None:
-            continue
-        propre = nettoyer(lire_csv(chemin), saison, ligue)
+    for saison, brut in _saisons_brutes(ligue, nb_saisons, forcer, aujourdhui):
+        propre = nettoyer(brut, saison, ligue)
         if not propre.empty:
             morceaux.append(propre)
 
@@ -356,6 +476,46 @@ def charger(
     total = pd.concat(morceaux, ignore_index=True)
     total = total.drop_duplicates(subset=["date", "dom", "ext"], keep="last")
     return total.sort_values("date").reset_index(drop=True)
+
+
+def _saisons_brutes(
+    ligue: str, nb_saisons: int, forcer: bool, aujourdhui: date | None,
+) -> list[tuple[str, pd.DataFrame]]:
+    """(code saison, CSV brut) pour chaque saison demandee et disponible.
+
+    Un fichier par saison chez football-data (et un par saison API-Football),
+    sauf pour les championnats football-data sur l'annee civile : un seul
+    fichier, decoupe ici selon sa colonne Season.
+    """
+    if not annee_civile(ligue) or ligue_api_football(ligue):
+        codes = (dernieres_annees(nb_saisons, aujourdhui) if annee_civile(ligue)
+                 else dernieres_saisons(nb_saisons, aujourdhui))
+        sortie = []
+        for saison in codes:
+            chemin = telecharger(ligue, saison, forcer=forcer)
+            if chemin is not None:
+                sortie.append((saison, lire_csv(chemin)))
+        if ligue_api_football(ligue) and not {s for s, _ in sortie} & set(codes[-2:]):
+            # Sans la saison en cours ni la precedente (plan gratuit : rien apres
+            # 2024), le modele estimerait des effectifs d'il y a deux ans ou plus.
+            # Mieux vaut un championnat vide qu'un prono sur une equipe disparue.
+            if sortie:
+                _journal.warning(
+                    "%s : aucune saison recente (%s) — l'historique de %s est trop "
+                    "ancien pour estimer quoi que ce soit, on ne l'utilise pas.",
+                    ligue, " ou ".join(codes[-2:]), ", ".join(s for s, _ in sortie))
+            return []
+        return sortie
+
+    chemin = telecharger(ligue, FICHIER_UNIQUE, forcer=forcer)
+    if chemin is None:
+        return []
+    brut = lire_csv(chemin)
+    brut.columns = [str(c).strip().lstrip("﻿") for c in brut.columns]
+    if "Season" not in brut.columns:
+        return []
+    annees = brut["Season"].astype("string").str.strip()
+    return [(annee, brut[annees == annee]) for annee in dernieres_annees(nb_saisons, aujourdhui)]
 
 
 def nb_matchs_par_equipe(df: pd.DataFrame) -> dict[str, int]:

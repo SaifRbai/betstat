@@ -11,6 +11,7 @@ import pathlib
 import re
 import threading
 import urllib.request
+from datetime import date, timedelta
 from http.server import ThreadingHTTPServer
 
 import numpy as np
@@ -21,6 +22,22 @@ import config
 import web
 
 RACINE = pathlib.Path(__file__).resolve().parent.parent
+JOUR_AUJOURDHUI = web.aujourdhui()
+DATE_AUJOURDHUI = date.fromisoformat(JOUR_AUJOURDHUI)
+JOUR_DIMANCHE = (
+    DATE_AUJOURDHUI + timedelta(days=6 - DATE_AUJOURDHUI.weekday())
+).isoformat()
+JOUR_DEMAIN = (
+    DATE_AUJOURDHUI + timedelta(days=1)
+    if DATE_AUJOURDHUI.weekday() < 6 else DATE_AUJOURDHUI
+).isoformat()
+JOUR_HIER = (DATE_AUJOURDHUI - timedelta(days=1)).isoformat()
+JOUR_LUNDI_PROCHAIN = (
+    DATE_AUJOURDHUI + timedelta(days=7 - DATE_AUJOURDHUI.weekday())
+).isoformat()
+HORODATAGE_PASSE = (
+    pd.Timestamp.now(tz="UTC") - pd.Timedelta(minutes=1)
+).isoformat()
 
 
 class FauxModele:
@@ -42,7 +59,7 @@ class FauxModele:
 
 
 COTES = pd.DataFrame({
-    "date": ["2026-08-21T18:45:00Z", "2026-08-22T18:45:00Z"],
+    "date": [f"{JOUR_DEMAIN}T18:45:00Z", f"{JOUR_DIMANCHE}T18:45:00Z"],
     "dom": ["Paris SG", "Le Mans"], "ext": ["Marseille", "Lens"],
     "bookmaker": ["b1", "b1"]})
 
@@ -84,6 +101,59 @@ def test_une_equipe_sans_historique_est_signalee_pas_escamotee(bouchons):
     assert age == 12.0
 
 
+def test_la_page_garde_tous_les_matchs_a_venir(bouchons, monkeypatch):
+    cotes = pd.DataFrame({
+        "date": [
+            f"{JOUR_HIER}T18:45:00Z",
+            f"{JOUR_DEMAIN}T18:45:00Z",
+            f"{JOUR_DIMANCHE}T18:45:00Z",
+            f"{JOUR_LUNDI_PROCHAIN}T18:45:00Z",
+        ],
+        "dom": ["Paris SG"] * 4,
+        "ext": ["Marseille"] * 4,
+        "bookmaker": ["b1"] * 4,
+    })
+    monkeypatch.setattr(web.cotes_module, "lire_cache", lambda c: (cotes, 12.0))
+    matchs, _, _ = web.affiches("F1")
+    assert {match["date"][:10] for match in matchs} == {JOUR_DEMAIN, JOUR_DIMANCHE, JOUR_LUNDI_PROCHAIN}
+
+
+def test_les_opportunites_recoivent_tous_les_matchs_a_venir(
+    bouchons, monkeypatch
+):
+    cotes = pd.DataFrame({
+        "date": [
+            f"{JOUR_HIER}T18:45:00Z",
+            f"{JOUR_DEMAIN}T18:45:00Z",
+            f"{JOUR_DIMANCHE}T18:45:00Z",
+            f"{JOUR_LUNDI_PROCHAIN}T18:45:00Z",
+        ],
+        "dom": ["Paris SG"] * 4,
+        "ext": ["Marseille"] * 4,
+        "bookmaker": ["b1"] * 4,
+    })
+    recus = []
+    monkeypatch.setattr(web.cotes_module, "lire_cache", lambda c: (cotes, 12.0))
+    monkeypatch.setattr(web.valeur_module, "detecter",
+                        lambda tableau, *_a, **_k: recus.extend(tableau["date"]) or [])
+    web.opportunites("F1", 1000.0)
+    assert {str(date)[:10] for date in recus} == {JOUR_DEMAIN, JOUR_DIMANCHE, JOUR_LUNDI_PROCHAIN}
+
+
+def test_le_plafond_du_combine_empile_tous_les_favoris():
+    candidats = [
+        web.quotidien_module.Selection(
+            date="2026-10-10", championnat="F1", dom=f"E{i}", ext="X",
+            selection="1", equipe=f"E{i}", p_marche=1 - i / 100,
+            cote=1.1, bookmaker="book", cote_mediane=1.1, prime=0,
+            nb_bookmakers=10, esperance=0,
+        )
+        for i in range(31)
+    ]
+    assert web._cote_maximale(candidats) == pytest.approx(1.1 ** 31, abs=0.01)
+    assert web.MAX_JAMBES_COMBINE_JOUR is None
+
+
 def test_etat_du_jour_porte_les_garde_fous(bouchons):
     etat = web.etat_du_jour("F1", 500.0)
     assert etat["plafond_mise"] == round(500.0 * config.PLAFOND_MISE_BANKROLL, 2)
@@ -115,9 +185,9 @@ def test_rafraichir_passe_bien_par_l_api(bouchons, monkeypatch):
 
 def test_la_vue_du_jour_ne_garde_que_la_journee_demandee(bouchons):
     """Le bouchon porte un match le 21 et un le 22 : un seul doit passer."""
-    matchs, _, _ = web.affiches("F1", jour="2026-08-21")
+    matchs, _, _ = web.affiches("F1", jour=JOUR_DEMAIN)
     assert [(m["dom"], m["ext"]) for m in matchs] == [("Paris SG", "Marseille")]
-    assert web.affiches("F1", jour="2026-08-22")[0] == []
+    assert web.affiches("F1", jour=JOUR_LUNDI_PROCHAIN)[0] == []
 
 
 def test_seules_les_ligues_qui_jouent_sont_retenues(bouchons, monkeypatch):
@@ -126,7 +196,7 @@ def test_seules_les_ligues_qui_jouent_sont_retenues(bouchons, monkeypatch):
     monkeypatch.setattr(web.cotes_module, "lire_cache",
                         lambda c: (COTES, 12.0) if c in ("F1", "E0")
                         else (COTES.iloc[0:0], None))
-    assert web.ligues_du_jour("2026-08-21") == ["E0", "F1"]
+    assert web.ligues_du_jour(JOUR_DEMAIN) == ["E0", "F1"]
     assert web.ligues_du_jour("2027-01-01") == []
 
 
@@ -137,21 +207,21 @@ def test_la_vue_du_jour_n_entraine_pas_les_ligues_au_repos(bouchons, monkeypatch
                         else (COTES.iloc[0:0], None))
     monkeypatch.setattr(web.CACHE, "modele",
                         lambda c: entraines.append(c) or (pd.DataFrame(), FauxModele()))
-    web.etat_aujourdhui(1000.0, jour="2026-08-21")
+    web.etat_aujourdhui(1000.0, jour=JOUR_DEMAIN)
     assert set(entraines) == {"F1"}
 
 
 def test_la_vue_du_jour_marque_chaque_match_de_sa_ligue(bouchons):
-    etat = web.etat_aujourdhui(1000.0, jour="2026-08-21")
+    etat = web.etat_aujourdhui(1000.0, jour=JOUR_DEMAIN)
     assert etat["matchs"], "la journee du bouchon n'est pas vide"
     assert all(m["ligue"] in config.CHAMPIONNATS for m in etat["matchs"])
-    assert etat["multi"] is True and etat["jour"] == "2026-08-21"
+    assert etat["multi"] is True and etat["jour"] == JOUR_DEMAIN
 
 
 def test_la_vue_du_jour_tait_les_mesures_par_championnat(bouchons):
     """Un ROI mesure sur la Ligue 1 ne decrit pas la Bundesliga : cumuler les
     deux melangerait des echantillons qui n'ont rien a voir."""
-    etat = web.etat_aujourdhui(1000.0, jour="2026-08-21")
+    etat = web.etat_aujourdhui(1000.0, jour=JOUR_DEMAIN)
     assert etat["performance"] is None
     assert etat["poids_modele"] is None
 
@@ -163,7 +233,7 @@ def test_une_ligue_en_panne_n_emporte_pas_la_journee(bouchons, monkeypatch):
         return pd.DataFrame(), FauxModele()
 
     monkeypatch.setattr(web.CACHE, "modele", modele)
-    etat = web.etat_aujourdhui(1000.0, jour="2026-08-21")
+    etat = web.etat_aujourdhui(1000.0, jour=JOUR_DEMAIN)
     en_panne = [l for l in etat["ligues"] if l["erreur"]]
     assert [l["code"] for l in en_panne] == ["E0"]
     assert "Aucune donnee" in en_panne[0]["erreur"]
@@ -175,7 +245,7 @@ def test_consulter_la_journee_ne_consomme_aucun_credit(bouchons, monkeypatch):
         raise AssertionError("la vue du jour a appele l'API des cotes")
 
     monkeypatch.setattr(web.cotes_module, "recuperer", interdit)
-    web.etat_aujourdhui(1000.0, jour="2026-08-21")
+    web.etat_aujourdhui(1000.0, jour=JOUR_DEMAIN)
 
 
 # --------------------------------------------------------------------------
@@ -185,7 +255,8 @@ def test_consulter_la_journee_ne_consomme_aucun_credit(bouchons, monkeypatch):
 def test_un_match_a_venir_ne_porte_aucun_verdict(bouchons, monkeypatch):
     """Seul un match joue peut etre juge."""
     futur = pd.DataFrame({
-        "date": ["2099-01-01T18:45:00Z"], "dom": ["Paris SG"], "ext": ["Marseille"],
+        "date": [f"{JOUR_DEMAIN}T18:45:00Z"],
+        "dom": ["Paris SG"], "ext": ["Marseille"],
         "bookmaker": ["b1"]})
     monkeypatch.setattr(web.cotes_module, "lire_cache", lambda c: (futur, 12.0))
     matchs, _, _ = web.affiches("F1")
@@ -196,7 +267,7 @@ def test_un_match_a_venir_ne_porte_aucun_verdict(bouchons, monkeypatch):
 def _joue(monkeypatch, buts_dom, buts_ext, **extra):
     """Un match du bouchon place dans le passe, avec son score publie."""
     passe = pd.DataFrame({
-        "date": ["2020-01-01T18:45:00Z"], "dom": ["Paris SG"], "ext": ["Marseille"],
+        "date": [HORODATAGE_PASSE], "dom": ["Paris SG"], "ext": ["Marseille"],
         "bookmaker": ["b1"]})
     monkeypatch.setattr(web.cotes_module, "lire_cache", lambda c: (passe, 12.0))
     monkeypatch.setattr(
@@ -245,7 +316,7 @@ def test_un_match_joue_sans_resultat_publie_le_dit(bouchons, monkeypatch):
     """football-data publie par lots : de deux a treize jours de retard selon
     la ligue. Se taire laisserait croire que le match n'a pas eu lieu."""
     passe = pd.DataFrame({
-        "date": ["2020-01-01T18:45:00Z"], "dom": ["Paris SG"], "ext": ["Marseille"],
+        "date": [HORODATAGE_PASSE], "dom": ["Paris SG"], "ext": ["Marseille"],
         "bookmaker": ["b1"]})
     monkeypatch.setattr(web.cotes_module, "lire_cache", lambda c: (passe, 12.0))
     monkeypatch.setattr(web._Resultats, "du_match",
@@ -315,10 +386,10 @@ def test_une_saisie_invalide_donne_un_message_lisible(serveur, requete, attendu)
 
 
 def test_la_journee_est_servie(serveur):
-    code, charge = _get(serveur, "/api/aujourdhui?bankroll=800&jour=2026-08-21")
+    code, charge = _get(serveur, f"/api/aujourdhui?bankroll=800&jour={JOUR_DEMAIN}")
     assert code == 200
     assert charge["bankroll"] == 800.0
-    assert charge["jour"] == "2026-08-21"
+    assert charge["jour"] == JOUR_DEMAIN
     assert charge["multi"] is True
     assert all(m["ligue"] for m in charge["matchs"])
 
@@ -337,12 +408,13 @@ def test_une_journee_mal_demandee_donne_un_message_lisible(serveur, requete, att
 
 def test_le_combine_ne_retient_que_la_journee_demandee(serveur):
     """Le bouton s'appelle « du jour » : il ne doit pas empiler trois journees."""
-    code, charge = _get(serveur, "/api/combine-du-jour?cible=1.5&mise=10&jour=2026-08-21")
+    code, charge = _get(
+        serveur, f"/api/combine-du-jour?cible=1.5&mise=10&jour={JOUR_DEMAIN}")
     assert code == 200
     if "erreur" in charge:                      # bouchon sans favori ce jour-la
         return
-    assert charge["jours_couverts"] == ["2026-08-21"]
-    assert all(j["date"].startswith("2026-08-21") for j in charge["jambes"])
+    assert charge["jours_couverts"] == [JOUR_DEMAIN]
+    assert all(j["date"].startswith(JOUR_DEMAIN) for j in charge["jambes"])
 
 
 def test_le_combine_dit_sur_combien_de_journees_il_porte(serveur):
@@ -483,6 +555,35 @@ def test_la_mise_du_combine_n_est_plus_codee_en_dur():
     assert 'id="mise"' in page and 'id="cible"' in page
 
 
+def test_l_objectif_du_combine_se_donne_en_euros():
+    """La mise et le gain minimum sont les deux chiffres qu'on a en tete avant
+    de parier ; la cote a atteindre n'en est que le quotient. Le champ manquait :
+    on ne pouvait regler qu'un multiplicateur et lire le gain sans le fixer."""
+    page = (RACINE / "web" / "page.html").read_text(encoding="utf-8")
+    assert 'id="gain-minimum"' in page
+    assert "CIBLE = borner(gainDemande() / miseChoisie());" in page
+
+
+def test_le_gain_demande_est_un_plancher_jamais_arrondi_vers_le_bas():
+    """Arrondir la cible deduite du gain (x9.3 ramene a x9) rendrait un combine
+    payant moins que le minimum demande. Seul le curseur, qui part de la cote,
+    a le droit d'arrondir."""
+    page = (RACINE / "web" / "page.html").read_text(encoding="utf-8")
+    corps = page[page.index("function cibleDepuisGain"):
+                 page.index("function cibleDepuisCurseur")]
+    assert "Math.round" not in corps
+
+
+def test_le_combine_accepte_un_objectif_non_rond(serveur):
+    """Une cible deduite d'un gain tombe rarement juste : 93 EUR pour 10 de mise
+    valent x9.3. La refuser obligerait la page a arrondir, donc a rendre moins
+    que le minimum demande."""
+    code, charge = _get(serveur, "/api/combine-du-jour?cible=9.3&mise=10")
+    assert code == 200
+    if "erreur" not in charge:
+        assert charge["cible"] == pytest.approx(9.3)
+
+
 def test_l_echelle_du_curseur_est_multiplicative():
     """Une cote se multiplie. En echelle lineaire, les trois quarts de la course
     du curseur tomberaient entre x25 et x100, la zone la moins utile."""
@@ -534,14 +635,14 @@ def test_le_bandeau_ne_peut_pas_etre_masque():
 # Fiabilite des estimations et melange de ligues
 # --------------------------------------------------------------------------
 
-def test_une_equipe_sans_historique_suffisant_est_signalee(monkeypatch):
+def test_une_equipe_sans_historique_suffisant_est_signalee(bouchons, monkeypatch):
     """Un promu a deux matchs recoit des forces absurdes : il faut le dire."""
     charges = pd.DataFrame({
         "dom": ["Cambuur"] + ["Ajax"] * 20,
         "ext": ["Feyenoord"] * 21})
     monkeypatch.setattr(web.CACHE, "modele", lambda c: (charges, FauxModele()))
     monkeypatch.setattr(web.cotes_module, "lire_cache", lambda c: (pd.DataFrame({
-        "date": ["2026-08-23T14:45:00Z"], "dom": ["Paris SG"], "ext": ["Marseille"],
+        "date": [f"{JOUR_DEMAIN}T14:45:00Z"], "dom": ["Paris SG"], "ext": ["Marseille"],
         "bookmaker": ["b1"]}), 5.0))
     matchs, _, _ = web.affiches("N1")
     fragiles = {e["equipe"]: e["matchs"] for e in matchs[0]["peu_de_donnees"]}
@@ -672,3 +773,72 @@ def test_l_etat_des_apis_est_servi(serveur):
     code, charge = _get(serveur, "/api/apis")
     assert code == 200
     assert len(charge["services"]) == 3
+
+
+# --------------------------------------------------------------------------
+# Onglet Equipes fortes
+# --------------------------------------------------------------------------
+
+def _favori(dom: str, p: float, cote: float, instant: str):
+    return web.quotidien_module.Selection(
+        date=instant, championnat="F1", dom=dom, ext="X", selection="1",
+        equipe=dom, p_marche=p, cote=cote, bookmaker="book", cote_mediane=cote,
+        prime=0.0, nb_bookmakers=10, esperance=p * cote - 1)
+
+
+@pytest.fixture()
+def favoris(monkeypatch):
+    demain = f"{JOUR_DEMAIN}T18:45:00Z"
+    liste = [_favori("Lens", 0.72, 1.40, demain),
+             _favori("Paris SG", 0.85, 1.15, demain),
+             _favori("Monaco", 0.78, 1.25, demain),
+             _favori("Deja joue", 0.95, 1.05, HORODATAGE_PASSE)]
+    monkeypatch.setattr(web.cotes_module, "lire_cache", lambda c: (COTES, 12.0))
+    monkeypatch.setattr(web.quotidien_module, "du_jour", lambda *a, **k: list(liste))
+
+
+def test_les_equipes_fortes_sont_triees_et_ecartent_les_matchs_joues(favoris):
+    charge = web.equipes_fortes(None, 10.0)
+    assert [f["dom"] for f in charge["fortes"]] == ["Paris SG", "Monaco", "Lens"]
+    assert charge["fortes"][0]["perd_une_fois_sur"] == pytest.approx(1 / 0.15)
+
+
+def test_les_combines_prets_portent_leur_probabilite_jointe(favoris):
+    combines = web.equipes_fortes(JOUR_DEMAIN, 10.0)["combines"]
+    assert combines, "trois favoris a 1.15, 1.25, 1.40 atteignent x2"
+    prudent = combines[0]
+    assert prudent["nom"] == "Prudent" and prudent["cote_totale"] >= 2.0
+    attendu = 1.0
+    for jambe in prudent["jambes"]:
+        attendu *= jambe["p_marche"]
+    assert prudent["probabilite"] == pytest.approx(attendu)
+    # Le meme empilement ne revient pas sous un autre nom.
+    cles = [tuple(j["dom"] for j in c["jambes"]) for c in combines]
+    assert len(cles) == len(set(cles))
+
+
+def test_equipes_fortes_sans_cotes_dit_quoi_faire(monkeypatch):
+    monkeypatch.setattr(web.cotes_module, "lire_cache", lambda c: (pd.DataFrame(), None))
+    assert "Rafraichir" in web.equipes_fortes(None, 10.0)["erreur"]
+
+
+@pytest.mark.parametrize("requete", [
+    "/api/equipes-fortes?jour=samedi", "/api/equipes-fortes?mise=-3"])
+def test_equipes_fortes_refuse_une_demande_illisible(serveur, requete):
+    code, charge = _get(serveur, requete)
+    assert code == 400 and "erreur" in charge
+
+
+def test_une_reponse_ne_contient_jamais_nan():
+    """JSON.parse refuse NaN : une seule case vide faisait tomber toute la page."""
+    assert web._sans_nan({"a": [float("nan"), 1.0], "b": float("inf")}) == {
+        "a": [None, 1.0], "b": None}
+
+
+def test_la_vue_aujourdhui_affiche_les_combines_prets():
+    """Les combines prets apparaissent aussi en tete de « Aujourd'hui — toutes
+    ligues », et seulement la : `etat.jour` n'existe que dans cette vue."""
+    page = (RACINE / "web" / "page.html").read_text(encoding="utf-8")
+    assert 'id="combines-aujourdhui"' in page
+    corps = page[page.index("function afficher(etat)"):page.index("async function demanderLeJour(")]
+    assert "afficherCombinesAujourdhui(etat.jour || null)" in corps

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date
 from pathlib import Path
 
@@ -214,3 +215,129 @@ def test_un_faux_csv_est_retire_du_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(resultats.requests, "get", lambda *a, **k: _Reponse(PAGE_ERREUR))
     assert resultats.telecharger("F1", "2627") is None
     assert not poison.exists()
+
+
+# --------------------------------------------------------------------------
+# Championnats sur l'annee civile : un fichier unique "new/BRA.csv"
+# --------------------------------------------------------------------------
+
+CSV_ANNEE_CIVILE = (
+    "﻿Country,League,Season,Date,Time,Home,Away,HG,AG,Res,PSCH,PSCD,PSCA,"
+    "MaxCH,MaxCD,MaxCA,AvgCH,AvgCD,AvgCA,BFECH,BFECD,BFECA,B365CH,B365CD,B365CA\n"
+    "Brazil,Serie A,2023,15/04/2023,20:00,Flamengo RJ,Coritiba,3,0,H,"
+    "1.3,5.5,11,1.35,5.8,12,1.31,5.2,10,,,,1.3,5.25,10\n"
+    "Brazil,Serie A,2025,30/03/2025,20:00,Palmeiras,Botafogo RJ,0,0,D,"
+    "1.9,3.4,4.5,1.95,3.5,4.6,1.88,3.3,4.3,,,,1.9,3.4,4.33\n"
+    "Brazil,Serie A,2026,18/10/2026,22:30,Bahia,Flamengo RJ,0,3,A,"
+    ",,,4.2,3.8,2,3.69,3.71,1.88,4,4,1.97,4.2,3.6,1.86\n"
+)
+
+
+def test_dernieres_annees_civiles() -> None:
+    assert resultats.dernieres_annees(3, date(2026, 10, 26)) == ["2024", "2025", "2026"]
+    assert resultats.dernieres_annees(0, date(2026, 1, 5)) == ["2026"]
+
+
+def test_le_bresil_se_charge_depuis_le_fichier_unique(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un seul fichier, decoupe par sa colonne Season, colonnes ramenees au format mmz."""
+    monkeypatch.setattr(resultats.config, "DOSSIER_CACHE_RESULTATS", tmp_path)
+    (tmp_path / "BRA_tout.csv").write_text(CSV_ANNEE_CIVILE, encoding="utf-8")
+    monkeypatch.setattr(resultats.requests, "get", lambda *a, **k: pytest.fail("reseau"))
+
+    df = resultats.charger("BRA", 2, aujourdhui=date(2026, 10, 26))
+    assert df["saison"].tolist() == ["2025", "2026"]          # 2023 hors fenetre
+    assert df["dom"].tolist() == ["Palmeiras", "Bahia"]
+    assert df["buts_ext"].tolist() == [0, 3]
+    assert df["resultat"].tolist() == ["D", "A"]
+    # Seules les cotes de cloture existent : elles servent de dernier recours.
+    assert df["cote_1"].tolist() == [1.88, 3.69]
+    assert df["cote_2_max"].tolist() == [4.6, 2.0]
+
+
+def test_le_fichier_unique_perime_comme_la_saison_en_cours(tmp_path):
+    """Il contient la saison en cours : il ne doit pas etre fige pour toujours."""
+    chemin = tmp_path / "BRA_tout.csv"
+    chemin.write_text(CSV_ANNEE_CIVILE, encoding="utf-8")
+    assert resultats._cache_valide(chemin, resultats.FICHIER_UNIQUE) is True
+    vieux = chemin.stat().st_mtime - resultats.config.TTL_SAISON_COURANTE_SECONDES - 60
+    os.utime(chemin, (vieux, vieux))
+    assert resultats._cache_valide(chemin, resultats.FICHIER_UNIQUE) is False
+
+
+# --------------------------------------------------------------------------
+# Serie B bresilienne : API-Football converti au format football-data
+# --------------------------------------------------------------------------
+
+def _match_api_football(jour: str, dom: str, ext: str, buts: tuple, statut: str = "FT") -> dict:
+    return {
+        "fixture": {"date": f"{jour}T22:00:00+00:00", "status": {"short": statut}},
+        "teams": {"home": {"name": dom}, "away": {"name": ext}},
+        "score": {"fulltime": {"home": buts[0], "away": buts[1]},
+                  "halftime": {"home": 0, "away": 0}},
+    }
+
+
+def test_la_serie_b_vient_d_api_football(tmp_path, monkeypatch) -> None:
+    """Matchs termines seulement, et noms ramenes a l'orthographe football-data."""
+    from data import absences
+
+    monkeypatch.setattr(resultats.config, "DOSSIER_CACHE_RESULTATS", tmp_path)
+    monkeypatch.setattr(resultats.config, "DOSSIER_DONNEES", tmp_path)
+    matchs = [
+        _match_api_football("2024-04-19", "Botafogo SP", "America Mineiro", (1, 1)),
+        _match_api_football("2024-04-20", "Novorizontino", "Atletico Goianiense", (2, 0)),
+        _match_api_football("2024-11-24", "Avai", "CRB", (None, None), statut="NS"),
+    ] * 4                                       # au-dela des 200 octets d'un vrai CSV
+    appels = []
+
+    def faux_appel(chemin: str, parametres: dict):
+        appels.append((chemin, parametres))
+        return matchs, 90
+
+    monkeypatch.setattr(absences, "_appeler", faux_appel)
+    df = resultats.charger("BRB", 1, aujourdhui=date(2024, 12, 31))
+
+    assert appels == [("fixtures", {"league": 72, "season": "2024"})]
+    assert df["saison"].unique().tolist() == ["2024"]
+    assert set(df["dom"]) == {"Botafogo-SP", "Novorizontino"}       # "NS" ignore
+    assert set(df["ext"]) == {"America MG", "Atletico GO"}           # comme en Serie A
+    assert df["resultat"].tolist()[:2] == ["D", "H"]
+    assert absences.lire_compteur()["appels"] == 1
+
+
+def test_une_saison_hors_abonnement_ne_casse_rien(tmp_path, monkeypatch) -> None:
+    """Le plan gratuit refuse 2025 : un historique vide, et pas de nouvel appel avant 6 h."""
+    from data import absences
+
+    monkeypatch.setattr(resultats.config, "DOSSIER_CACHE_RESULTATS", tmp_path)
+    monkeypatch.setattr(resultats.config, "DOSSIER_DONNEES", tmp_path)
+    appels = []
+
+    def refus(chemin: str, parametres: dict):
+        appels.append(parametres)
+        raise absences.HorsFenetre("Free plans do not have access to this season")
+
+    monkeypatch.setattr(absences, "_appeler", refus)
+    assert resultats.charger("BRB", 1, aujourdhui=date(2025, 6, 1)).empty
+    assert resultats.charger("BRB", 1, aujourdhui=date(2025, 6, 1)).empty
+    assert len(appels) == 1
+
+
+def test_un_historique_api_football_trop_ancien_n_est_pas_utilise(tmp_path, monkeypatch) -> None:
+    """2023-2024 seulement en octobre 2026 : rien plutot que des pronos perimes."""
+    from data import absences
+
+    monkeypatch.setattr(resultats.config, "DOSSIER_CACHE_RESULTATS", tmp_path)
+    monkeypatch.setattr(resultats.config, "DOSSIER_DONNEES", tmp_path)
+    vieux = [_match_api_football("2024-04-19", "Botafogo SP", "Avai", (1, 0))] * 8
+
+    def appel(chemin: str, parametres: dict):
+        if parametres["season"] in ("2023", "2024"):
+            return vieux, 90
+        raise absences.HorsFenetre("Free plans do not have access to this season")
+
+    monkeypatch.setattr(absences, "_appeler", appel)
+    assert resultats.charger("BRB", 4, aujourdhui=date(2026, 10, 26)).empty
+    assert not resultats.charger("BRB", 4, aujourdhui=date(2025, 3, 1)).empty   # 2024 = la precedente

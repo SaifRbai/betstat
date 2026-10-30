@@ -93,6 +93,15 @@
       "odds_api": [],
       "understat": []
     },
+    "Amazonas": {
+      "api_football": [
+        "Amazonas"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [],
+      "understat": []
+    },
     "Amed SK": {
       "fbref": [],
       "football_data": [
@@ -100,6 +109,19 @@
       ],
       "odds_api": [
         "Amed SK"
+      ],
+      "understat": []
+    },
+    "America Mineiro": {
+      "api_football": [
+        "America Mineiro"
+      ],
+      "fbref": [],
+      "football_data": [
+        "America MG"
+      ],
+      "odds_api": [
+        "America Mineiro"
       ],
       "understat": []
     },
@@ -183,12 +205,51 @@
       ],
       "understat": []
     },
+    "Atletico Goianiense": {
+      "api_football": [
+        "Atletico Goianiense"
+      ],
+      "fbref": [],
+      "football_data": [
+        "Atletico GO"
+      ],
+      "odds_api": [
+        "Atletico Goianiense"
+      ],
+      "understat": []
+    },
     "Atletico Madrid": {
       "fbref": [],
       "football_data": [
         "Ath Madrid"
       ],
       "odds_api": [],
+      "understat": []
+    },
+    "Atletico Mineiro": {
+      "api_football": [
+        "Atletico-MG"
+      ],
+      "fbref": [],
+      "football_data": [
+        "Atletico-MG"
+      ],
+      "odds_api": [
+        "Atletico Mineiro"
+      ],
+      "understat": []
+    },
+    "Atletico Paranaense": {
+      "api_football": [
+        "Atletico Paranaense"
+      ],
+      "fbref": [],
+      "football_data": [
+        "Athletico-PR"
+      ],
+      "odds_api": [
+        "Atletico Paranaense"
+      ],
       "understat": []
     },
     "Atromitos Athens": {
@@ -220,6 +281,23 @@
       "understat": [
         "Auxerre"
       ]
+    },
+    "Avai": {
+      "api_football": [
+        "Avai"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [],
+      "understat": []
+    },
+    "Bahia": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Bahia"
+      ],
+      "understat": []
     },
     "Barcelona": {
       "fbref": [],
@@ -335,6 +413,27 @@
         "Borussia M.Gladbach"
       ]
     },
+    "Botafogo": {
+      "fbref": [],
+      "football_data": [
+        "Botafogo RJ"
+      ],
+      "odds_api": [
+        "Botafogo"
+      ],
+      "understat": []
+    },
+    "Botafogo-SP": {
+      "api_football": [
+        "Botafogo SP"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Botafogo-SP"
+      ],
+      "understat": []
+    },
     "Bournemouth": {
       "fbref": [
         "Bournemouth"
@@ -348,6 +447,19 @@
       "understat": [
         "Bournemouth"
       ]
+    },
+    "Bragantino-SP": {
+      "api_football": [
+        "RB Bragantino"
+      ],
+      "fbref": [],
+      "football_data": [
+        "Bragantino"
+      ],
+      "odds_api": [
+        "Bragantino-SP"
+      ],
+      "understat": []
     },
     "Brentford": {
       "fbref": [
@@ -393,6 +505,15 @@
         "Brighton"
       ]
     },
+    "Brusque": {
+      "api_football": [
+        "Brusque"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [],
+      "understat": []
+    },
     "Burnley": {
       "fbref": [
         "Burnley"
@@ -415,6 +536,15 @@
       "odds_api": [
         "Burton Albion"
       ],
+      "understat": []
+    },
+    "CRB": {
+      "api_football": [
+        "CRB"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [],
       "understat": []
     },
     "Cadiz": {
@@ -457,6 +587,14 @@
       ],
       "understat": []
     },
+    "Ceara": {
+      "fbref": [],
+      "football_data": [
+        "Ceara"
+      ],
+      "odds_api": [],
+      "understat": []
+    },
     "Celta Fortuna": {
       "fbref": [],
       "football_data": [
@@ -482,6 +620,19 @@
       ],
       "odds_api": [
         "Cercle Brugge KSV"
+      ],
+      "understat": []
+    },
+    "Chapecoense": {
+      "api_football": [
+        "Chapecoense-sc"
+      ],
+      "fbref": [],
+      "football_data": [
+        "Chapecoense-SC"
+      ],
+      "odds_api": [
+        "Chapecoense"
       ],
       "understat": []
     },
@@ -529,6 +680,22 @@
       "odds_api": [],
       "understat": []
     },
+    "Corinthians": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Corinthians"
+      ],
+      "understat": []
+    },
+    "Coritiba": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Coritiba"
+      ],
+      "understat": []
+    },
     "Coventry City": {
       "fbref": [],
       "football_data": [
@@ -545,6 +712,22 @@
       "odds_api": [],
       "understat": []
     },
+    "Criciuma": {
+      "fbref": [],
+      "football_data": [
+        "Criciuma"
+      ],
+      "odds_api": [],
+      "understat": []
+    },
+    "Cruzeiro": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Cruzeiro"
+      ],
+      "understat": []
+    },
     "Crystal Palace": {
       "fbref": [
         "Crystal Palace"
@@ -558,6 +741,14 @@
       "understat": [
         "Crystal Palace"
       ]
+    },
+    "Cuiaba": {
+      "fbref": [],
+      "football_data": [
+        "Cuiaba"
+      ],
+      "odds_api": [],
+      "understat": []
     },
     "Darmstadt": {
       "fbref": [],
@@ -636,6 +827,9 @@
       "understat": []
     },
     "Erzurum BB": {
+      "api_football": [
+        "Erzurumspor FK"
+      ],
       "fbref": [],
       "football_data": [
         "Erzurumspor"
@@ -643,10 +837,7 @@
       "odds_api": [
         "Erzurum BB"
       ],
-      "understat": [],
-      "api_football": [
-        "Erzurumspor FK"
-      ]
+      "understat": []
     },
     "Espanyol": {
       "fbref": [],
@@ -726,6 +917,37 @@
       "odds_api": [],
       "understat": []
     },
+    "Flamengo": {
+      "fbref": [],
+      "football_data": [
+        "Flamengo RJ"
+      ],
+      "odds_api": [
+        "Flamengo"
+      ],
+      "understat": []
+    },
+    "Fluminense": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Fluminense"
+      ],
+      "understat": []
+    },
+    "Fortaleza": {
+      "api_football": [
+        "Fortaleza EC"
+      ],
+      "fbref": [],
+      "football_data": [
+        "Fortaleza"
+      ],
+      "odds_api": [
+        "Fortaleza"
+      ],
+      "understat": []
+    },
     "Fortuna Sittard": {
       "fbref": [],
       "football_data": [
@@ -794,6 +1016,14 @@
       "odds_api": [],
       "understat": []
     },
+    "Goias": {
+      "fbref": [],
+      "football_data": [
+        "Goias"
+      ],
+      "odds_api": [],
+      "understat": []
+    },
     "Goztepe": {
       "fbref": [],
       "football_data": [
@@ -810,7 +1040,24 @@
       "odds_api": [],
       "understat": []
     },
+    "Gremio": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Grêmio"
+      ],
+      "understat": []
+    },
     "Groningen": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [],
+      "understat": []
+    },
+    "Guarani Campinas": {
+      "api_football": [
+        "Guarani Campinas"
+      ],
       "fbref": [],
       "football_data": [],
       "odds_api": [],
@@ -904,6 +1151,14 @@
       ],
       "understat": []
     },
+    "Internacional": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Internacional"
+      ],
+      "understat": []
+    },
     "Ipswich Town": {
       "fbref": [
         "Ipswich Town"
@@ -917,6 +1172,23 @@
       "understat": [
         "Ipswich"
       ]
+    },
+    "Ituano": {
+      "api_football": [
+        "Ituano"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [],
+      "understat": []
+    },
+    "Juventude": {
+      "fbref": [],
+      "football_data": [
+        "Juventude"
+      ],
+      "odds_api": [],
+      "understat": []
     },
     "Juventus": {
       "fbref": [],
@@ -1218,6 +1490,14 @@
         "Metz"
       ]
     },
+    "Mirassol": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Mirassol"
+      ],
+      "understat": []
+    },
     "Monaco": {
       "fbref": [
         "Monaco"
@@ -1343,6 +1623,17 @@
         "Nottingham Forest"
       ]
     },
+    "Novorizontino": {
+      "api_football": [
+        "Novorizontino"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Grêmio Novorizontino"
+      ],
+      "understat": []
+    },
     "Olympiakos Piraeus": {
       "fbref": [],
       "football_data": [
@@ -1350,6 +1641,17 @@
       ],
       "odds_api": [
         "Olympiakos Piraeus"
+      ],
+      "understat": []
+    },
+    "Operario PR": {
+      "api_football": [
+        "Operario-PR"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Operario PR"
       ],
       "understat": []
     },
@@ -1385,6 +1687,14 @@
       "fbref": [],
       "football_data": [],
       "odds_api": [],
+      "understat": []
+    },
+    "Palmeiras": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Palmeiras"
+      ],
       "understat": []
     },
     "Panetolikos Agrinio": {
@@ -1435,6 +1745,15 @@
         "Parma Calcio 1913"
       ]
     },
+    "Paysandu": {
+      "api_football": [
+        "Paysandu"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [],
+      "understat": []
+    },
     "Peterborough United": {
       "fbref": [],
       "football_data": [
@@ -1458,6 +1777,17 @@
       ],
       "odds_api": [
         "Plymouth Argyle"
+      ],
+      "understat": []
+    },
+    "Ponte Preta": {
+      "api_football": [
+        "Ponte Preta"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Ponte Preta"
       ],
       "understat": []
     },
@@ -1558,15 +1888,15 @@
       "understat": []
     },
     "Red Star": {
+      "api_football": [
+        "RED Star FC 93"
+      ],
       "fbref": [],
       "football_data": [
         "Red Star"
       ],
       "odds_api": [],
-      "understat": [],
-      "api_football": [
-        "RED Star FC 93"
-      ]
+      "understat": []
     },
     "Reims": {
       "fbref": [
@@ -1581,6 +1911,14 @@
       "understat": [
         "Reims"
       ]
+    },
+    "Remo": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Remo"
+      ],
+      "understat": []
     },
     "Rennes": {
       "fbref": [
@@ -1665,6 +2003,22 @@
       "odds_api": [],
       "understat": []
     },
+    "Santos": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Santos"
+      ],
+      "understat": []
+    },
+    "Sao Paulo": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Sao Paulo"
+      ],
+      "understat": []
+    },
     "Sassuolo": {
       "fbref": [],
       "football_data": [],
@@ -1709,6 +2063,14 @@
     "Sparta Rotterdam": {
       "fbref": [],
       "football_data": [],
+      "odds_api": [],
+      "understat": []
+    },
+    "Sport Recife": {
+      "fbref": [],
+      "football_data": [
+        "Sport Recife"
+      ],
       "odds_api": [],
       "understat": []
     },
@@ -1944,6 +2306,19 @@
       "odds_api": [],
       "understat": []
     },
+    "Vasco da Gama": {
+      "api_football": [
+        "Vasco DA Gama"
+      ],
+      "fbref": [],
+      "football_data": [
+        "Vasco"
+      ],
+      "odds_api": [
+        "Vasco da Gama"
+      ],
+      "understat": []
+    },
     "Venezia": {
       "fbref": [],
       "football_data": [],
@@ -1960,10 +2335,27 @@
       ],
       "understat": []
     },
+    "Vila Nova": {
+      "api_football": [
+        "Vila Nova"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [],
+      "understat": []
+    },
     "Villarreal": {
       "fbref": [],
       "football_data": [],
       "odds_api": [],
+      "understat": []
+    },
+    "Vitoria": {
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Vitoria"
+      ],
       "understat": []
     },
     "Vitória SC": {

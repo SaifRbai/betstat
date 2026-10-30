@@ -1,0 +1,56 @@
+# Recalcule les pronos chaque matin et les publie sur GitHub Pages, pour que
+# l'application Android les affiche sans que le PC soit allume.
+#
+# Budget The Odds API : 12 credits par passage (6 ligues, celles qui jouent
+# aujourd'hui d'abord), soit ~360 par mois sur les 500 offerts. Le reste
+# permet encore des rafraichissements a la main depuis le PC.
+name: Pronos du jour
+
+on:
+  schedule:
+    - cron: "0 6 * * *"          # 7 h a Tunis
+  workflow_dispatch:             # bouton « Run workflow » pour un passage immediat
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment:
+      name: github-pages
+      url: ${{ steps.deploiement.outputs.page_url }}
+    env:
+      TZ: Africa/Tunis           # « aujourd'hui » est celui du telephone
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      FOOTBALL_DATA_ORG_KEY: ${{ secrets.FOOTBALL_DATA_ORG_KEY }}
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      # Historiques et cotes gardes d'un passage a l'autre : sans cela chaque
+      # matin retelechargerait tout, et les ligues non rafraichies ce jour-la
+      # n'auraient plus aucune cote.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.foot_edge
+          key: foot-edge-${{ github.run_id }}
+          restore-keys: foot-edge-
+      - run: python publier.py --credits 12
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deploiement
+        uses: actions/deploy-pages@v4

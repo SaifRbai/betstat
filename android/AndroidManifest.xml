@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Client Android de l'interface web : une WebView plein ecran qui affiche
+     le serveur web.py du PC, lance en mode reseau. Aucun calcul ici. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.rab3ounstat.app"
+    android:versionCode="3"
+    android:versionName="2.0">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- usesCleartextTraffic : le serveur du PC parle http sur le Wi-Fi local. -->
+    <application
+        android:label="RAB3OUNSTAT"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.Rab3ounstat"
+        android:usesCleartextTraffic="true"
+        android:allowBackup="false">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
