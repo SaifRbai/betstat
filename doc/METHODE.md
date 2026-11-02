@@ -94,6 +94,29 @@ invariant par translation (`attaque_k + c`, `defense_k - c` donne les memes
 intensites) : on ne pose donc aucune contrainte pendant l'optimisation, et on
 **recentre les attaques a posteriori** sur une moyenne nulle.
 
+### Retrecissement des forces (penalite L2)
+
+On minimise `-log L + r * somme_k (attaque_k^2 + defense_k^2)`. Chaque force est
+tiree vers la moyenne du championnat, d'autant plus qu'elle repose sur peu de
+matchs (debut de saison, promus, xi eleve). Sans cette penalite, le modele
+sur-reagit aux series courtes et se montre trop confiant.
+
+Valeur par defaut `r = 3` (`REGULARISATION_DEFAUT`), recalibree par championnat
+par `cli.py calibrer` dans {0, 1, 3, 5, 8}. Log-loss 1N2 walk-forward, 4 saisons,
+`xi = 0.002`, cible buts :
+
+| championnat | r = 0 | r = 3 | r = 5 | marche |
+|---|---|---|---|---|
+| Ligue 1 | 0.9997 | — | 0.9841 | 0.9646 |
+| Bundesliga | 1.0336 | 1.0040 | 1.0033 | 0.9780 |
+| Premier League | 1.0268 | 1.0109 | 1.0122 | 1.0014 |
+| Eredivisie | 1.0141 | 0.9971 | 0.9955 | 0.9752 |
+| La Liga | 0.9805 | 0.9756 | 0.9770 | 0.9538 |
+| Serie A | 0.9648 | 0.9683 | 0.9717 | 0.9450 |
+
+Gain net sur 5 championnats sur 6 (jusqu'a -0.03), legere perte en Serie A :
+d'ou la calibration par championnat. Le marche reste devant partout.
+
 Option `force_domicile_separee` : 4 parametres par equipe au lieu de 2
 (`att_dom`, `att_ext`, `def_dom`, `def_ext`). Desactivee par defaut — doubler
 le nombre de parametres n'est utile qu'avec beaucoup de donnees.

@@ -151,7 +151,8 @@ def publier(sortie: Path, credits: int) -> dict:
         photo.prendre("/api/apis")
         etats = [photo.prendre("/api/aujourdhui", bankroll=BANKROLL)]
         for ligue in ligues:
-            if ligue["age_cotes_minutes"] is not None:
+            # Une ligue sans cotes (calendrier ESPN) ne coute aucun credit.
+            if ligue["age_cotes_minutes"] is not None or ligue.get("sans_cotes"):
                 etats.append(photo.prendre("/api/jour", championnat=ligue["code"],
                                            bankroll=BANKROLL))
         jours = jours_a_publier(etats)

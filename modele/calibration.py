@@ -32,6 +32,7 @@ Methode = Literal["multiplicatif", "puissance", "shin"]
 
 GRILLE_XI = (0.0, 0.0005, 0.001, 0.002, 0.003, 0.005)
 GRILLE_W = (0.0, 0.3, 0.5, 0.7, 1.0)
+GRILLE_REGULARISATION = (0.0, 1.0, 3.0, 5.0, 8.0)
 GRILLE_A = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0)
 
 
@@ -106,6 +107,7 @@ def predictions_walk_forward(
     force_domicile_separee: bool = False,
     frequence_reentrainement: int = 1,
     taille_initiale: int | None = None,
+    regularisation: float | None = None,
 ) -> pd.DataFrame:
     """Predictions hors echantillon, en n'utilisant jamais le futur.
 
@@ -131,7 +133,8 @@ def predictions_walk_forward(
                 modele = dc.entrainer(
                     passe, cible=cible, poids_xg=poids_xg, xi=xi,
                     force_domicile_separee=force_domicile_separee,
-                    date_reference=pd.Timestamp(jour))
+                    date_reference=pd.Timestamp(jour),
+                    regularisation=regularisation)
             except ValueError:
                 continue
         for match in matchs[matchs["date"] == jour].itertuples():
@@ -198,7 +201,8 @@ def optimiser_hyperparametres(
     """
     if utiliser_cache and championnat:
         cache = charger_hyperparametres(championnat)
-        if cache and cache.get("nb_matchs") == len(matchs) and cache.get("cible") == cible:
+        if (cache and cache.get("nb_matchs") == len(matchs) and cache.get("cible") == cible
+                and "regularisation" in cache):
             _journal.info("Hyperparametres repris du cache pour %s.", championnat)
             return cache
 
@@ -221,17 +225,50 @@ def optimiser_hyperparametres(
         print(_tableau_hyperparametres(tableau, cible))
 
     meilleur = tableau.iloc[0]
+    regularisation, log_loss_retenue, grille_reg = _choisir_regularisation(
+        matchs, cible, float(meilleur["xi"]), float(meilleur["w"]),
+        frequence_reentrainement, float(meilleur["log_loss"]), afficher)
     resultat = {
         "championnat": championnat.upper(), "cible": cible,
         "xi": float(meilleur["xi"]), "w": float(meilleur["w"]),
-        "log_loss": float(meilleur["log_loss"]), "nb_matchs": len(matchs),
+        "regularisation": regularisation,
+        "log_loss": log_loss_retenue, "nb_matchs": len(matchs),
         "grille": tableau.to_dict("records"),
+        "grille_regularisation": grille_reg,
     }
     if championnat:
         config.creer_dossiers()
         _chemin_hyperparametres(championnat).write_text(
             json.dumps(resultat, indent=2), encoding="utf-8")
     return resultat
+
+
+def _choisir_regularisation(matchs: pd.DataFrame, cible: dc.Cible, xi: float, w: float,
+                            frequence: int, log_loss_defaut: float,
+                            afficher: bool) -> tuple[float, float, list[dict]]:
+    """Force du retrecissement L2, choisie a (xi, w) fixes sur la meme validation.
+
+    Le balayage (xi, w) a ete fait avec dc.REGULARISATION_DEFAUT : on reutilise
+    son score pour cette valeur plutot que de la recalculer.
+    """
+    grille = [{"regularisation": dc.REGULARISATION_DEFAUT, "log_loss": log_loss_defaut}]
+    for force in GRILLE_REGULARISATION:
+        if force == dc.REGULARISATION_DEFAUT:
+            continue
+        predictions = predictions_walk_forward(
+            matchs, cible=cible, poids_xg=w, xi=xi,
+            frequence_reentrainement=frequence, regularisation=force)
+        if predictions.empty:
+            continue
+        probas = predictions[["p_modele_1", "p_modele_N", "p_modele_2"]].to_numpy()
+        grille.append({"regularisation": force,
+                       "log_loss": log_loss(probas, predictions["issue"].tolist())})
+    grille.sort(key=lambda ligne: ligne["log_loss"])
+    if afficher:
+        print("Retrecissement L2 des forces (xi et w fixes), tri par log-loss :")
+        for ligne in grille:
+            print(f"  {ligne['regularisation']:>5.1f}  {ligne['log_loss']:.4f}")
+    return float(grille[0]["regularisation"]), float(grille[0]["log_loss"]), grille
 
 
 def _tableau_hyperparametres(tableau: pd.DataFrame, cible: str) -> str:

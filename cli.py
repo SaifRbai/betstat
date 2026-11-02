@@ -89,7 +89,8 @@ def entrainer_modele(matchs: pd.DataFrame, source: str, championnat: str,
     parametres = calibration.charger_hyperparametres(championnat) or {}
     xi_retenu = xi if xi is not None else parametres.get("xi", dc.XI_DEFAUT)
     poids = parametres.get("w", dc.POIDS_XG_DEFAUT)
-    return dc.entrainer(matchs, cible=cible, poids_xg=poids, xi=xi_retenu)
+    return dc.entrainer(matchs, cible=cible, poids_xg=poids, xi=xi_retenu,
+                        regularisation=parametres.get("regularisation"))
 
 
 def _verifier_donnees(matchs: pd.DataFrame, championnat: str) -> None:
@@ -545,10 +546,11 @@ def commande_calibrer(args: argparse.Namespace) -> int:
     resultat = calibration.optimiser_hyperparametres(
         matchs, args.championnat, cible=args.source, utiliser_cache=not args.forcer)
     print(f"\nRetenu : xi={resultat['xi']} w={resultat['w']} "
+          f"retrecissement={resultat['regularisation']} "
           f"(log-loss {resultat['log_loss']:.4f})")
     predictions = calibration.predictions_walk_forward(
         matchs, cible=args.source, xi=resultat["xi"], poids_xg=resultat["w"],
-        frequence_reentrainement=5)
+        frequence_reentrainement=5, regularisation=resultat["regularisation"])
     if not predictions.empty:
         melange = calibration.calibrer_poids_melange(predictions)
         chemin = calibration.enregistrer_poids_melange(args.championnat, melange)

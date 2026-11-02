@@ -206,7 +206,8 @@ def candidats_multi(cotes: pd.DataFrame, championnat: str,
     d'un meme match ne sont pas independants, et les multiplier ferait passer
     une correlation pour une diversification.
     """
-    if cotes.empty:
+    # Meme garde que `candidats` : un tableau partiel ne propose rien.
+    if cotes.empty or not {"marche", "selection", "cote"}.issubset(cotes.columns):
         return []
     consensus_1n2 = _consensus_partition(cotes, "1N2")
     morceaux = [consensus_1n2.assign(marche="1N2") if not consensus_1n2.empty

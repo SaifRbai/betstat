@@ -224,7 +224,7 @@ def recuperer_brut(championnat: str, forcer: bool = False) -> tuple[list[dict], 
     Renvoie (donnees, provient_du_cache).
     """
     championnat = championnat.upper()
-    info = config.CHAMPIONNATS.get(championnat)
+    info = config.COMPETITIONS.get(championnat)
     if not info:
         raise ValueError(f"Championnat inconnu : {championnat!r}")
     sport = info.get("odds")
@@ -380,7 +380,7 @@ def recuperer_etendus(championnat: str, evenements: list[str],
     pour le reste — un seul budget, une seule verite sur ce qui reste.
     """
     championnat = championnat.upper()
-    info = config.CHAMPIONNATS.get(championnat) or {}
+    info = config.COMPETITIONS.get(championnat) or {}
     sport = info.get("odds")
     if not sport:
         return normaliser([], championnat)
@@ -503,6 +503,43 @@ def historique_match(dom: str, ext: str, date_match: str,
             lien, params=(dom, ext, marche, f"{str(date_match)[:10]}%"))
     finally:
         lien.close()
+
+
+def derniers_instantanes(championnat: str, debut: str, fin: str,
+                         chemin_db: Path | None = None) -> pd.DataFrame:
+    """Dernier instantane historise de chaque match commencant dans [debut, fin).
+
+    Le flux de l'API ne rend que les matchs a venir : des le coup d'envoi, un
+    match disparait du cache au rafraichissement suivant. L'historique, lui,
+    le garde, avec les dernieres cotes vues avant le coup d'envoi. `debut` et
+    `fin` sont des instants UTC ISO.
+    """
+    debut, fin = (pd.Timestamp(b) if pd.Timestamp(b).tzinfo
+                  else pd.Timestamp(b).tz_localize("UTC") for b in (debut, fin))
+    # date_match est ecrit par str(Timestamp UTC) : la comparaison de chaines
+    # suit donc l'ordre chronologique, a une journee de marge pres.
+    bas = str(debut - pd.Timedelta(days=1))
+    haut = str(fin + pd.Timedelta(days=1))
+    lien = connexion(chemin_db)
+    try:
+        lignes = pd.read_sql_query(
+            "SELECT h.* FROM cotes_historique h JOIN ("
+            "  SELECT date_match, dom, ext, MAX(horodatage) AS dernier"
+            "  FROM cotes_historique"
+            "  WHERE championnat=? AND date_match>=? AND date_match<?"
+            "  GROUP BY date_match, dom, ext) d"
+            " ON h.date_match=d.date_match AND h.dom=d.dom AND h.ext=d.ext"
+            "  AND h.horodatage=d.dernier WHERE h.championnat=?",
+            lien, params=(championnat.upper(), bas, haut, championnat.upper()))
+    finally:
+        lien.close()
+    if lignes.empty:
+        return pd.DataFrame(columns=list(COLONNES_COTES))
+    lignes["date"] = pd.to_datetime(lignes.pop("date_match"), utc=True, errors="coerce")
+    dans_le_creneau = (lignes["date"] >= debut) & (lignes["date"] < fin)
+    lignes = lignes.loc[dans_le_creneau].copy()
+    lignes["lien"] = ""
+    return lignes.reindex(columns=list(COLONNES_COTES)).reset_index(drop=True)
 
 
 def dernieres_cotes_avant(dom: str, ext: str, date_match: str, instant: str,

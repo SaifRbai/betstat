@@ -138,3 +138,25 @@ def test_rho_borne() -> None:
     matchs, *_ = _championnat_simule()
     modele = dc.entrainer(matchs, xi=0.0)
     assert -dc.BORNE_RHO <= modele.rho <= dc.BORNE_RHO
+
+
+def test_regularisation_retrecit_les_forces() -> None:
+    """La penalite L2 rapproche les forces de la moyenne sans casser l'ordre."""
+    matchs, *_ = _championnat_simule(nb_tours=2)
+    libre = dc.entrainer(matchs, xi=0.0, regularisation=0.0)
+    retreci = dc.entrainer(matchs, xi=0.0, regularisation=10.0)
+    ecart_libre = np.std([libre.attaque[e] for e in libre.equipes])
+    ecart_retreci = np.std([retreci.attaque[e] for e in retreci.equipes])
+    assert ecart_retreci < ecart_libre
+    corr = np.corrcoef([libre.attaque[e] for e in libre.equipes],
+                       [retreci.attaque[e] for e in retreci.equipes])[0, 1]
+    assert corr > 0.95
+    assert abs(sum(retreci.predire("Equipe 00", "Equipe 01")["1N2"].values()) - 1.0) < 1e-9
+
+
+def test_regularisation_par_defaut() -> None:
+    """Sans argument, entrainer() applique REGULARISATION_DEFAUT."""
+    matchs, *_ = _championnat_simule(nb_tours=2)
+    defaut = dc.entrainer(matchs, xi=0.0)
+    explicite = dc.entrainer(matchs, xi=0.0, regularisation=dc.REGULARISATION_DEFAUT)
+    assert defaut.attaque == pytest.approx(explicite.attaque)

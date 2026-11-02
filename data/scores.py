@@ -54,16 +54,29 @@ TTL_SECONDES = 3600
 # exclus : un prono confronte a un score de mi-temps serait juge sur rien.
 STATUTS_TERMINES = frozenset({"FT", "AET", "PEN"})
 
+# Rencontres en cours. Elles ne servent qu'a l'affichage « en direct » : aucun
+# prono n'est juge sur elles.
+STATUTS_EN_COURS = frozenset({"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"})
+
+# Rencontres qui n'auront pas lieu aujourd'hui, ou pas jusqu'au bout. Sans
+# elles, un match reporte passerait pour « en cours » a l'heure du coup d'envoi.
+STATUTS_ANNULES = frozenset({"PST", "CANC", "ABD", "AWD", "WO"})
+
+# Un score en direct vieux d'une heure ne dit plus rien. Dix minutes, c'est au
+# plus six appels par heure de match, sur un budget quotidien de cent.
+TTL_DIRECT_SECONDES = 600
+
 
 def _chemin_cache(jour: str) -> Path:
     return config.DOSSIER_CACHE_ABSENCES / f"scores_{jour}.json"
 
 
-def _cache_frais(chemin: Path) -> bool:
-    return chemin.exists() and (time.time() - chemin.stat().st_mtime) < TTL_SECONDES
+def _cache_frais(chemin: Path, ttl: int = TTL_SECONDES) -> bool:
+    return chemin.exists() and (time.time() - chemin.stat().st_mtime) < ttl
 
 
-def recuperer_brut(jour: str, forcer: bool = False) -> tuple[list, bool]:
+def recuperer_brut(jour: str, forcer: bool = False,
+                   ttl: int = TTL_SECONDES) -> tuple[list, bool]:
     """JSON brut des rencontres d'une date. Renvoie (donnees, provient_du_cache).
 
     Ne leve jamais pour une raison reseau : sans score, la page affiche « pas
@@ -74,7 +87,7 @@ def recuperer_brut(jour: str, forcer: bool = False) -> tuple[list, bool]:
     jour = str(jour)[:10]
     config.creer_dossiers()
     chemin = _chemin_cache(jour)
-    if not forcer and _cache_frais(chemin):
+    if not forcer and _cache_frais(chemin, ttl):
         return json.loads(chemin.read_text(encoding="utf-8")), True
 
     etat = absences_module.lire_compteur()
@@ -132,14 +145,44 @@ def du_jour(jour: str, equipes: list[str],
     except Exception as erreur:                     # jamais au prix de la page
         _journal.info("Scores du %s indisponibles : %s", jour, erreur)
         return {}
+    return _indexer(rencontres, equipes, STATUTS_TERMINES, jour)
 
+
+def en_direct(jour: str, equipes: list[str]) -> dict[tuple[str, str], dict]:
+    """Rencontres en cours d'une date : score du moment et minute de jeu.
+
+    Meme appel et meme cache que `du_jour`, mais relu toutes les dix minutes.
+    Un match termine entre-temps en sort, et `du_jour` le prend alors.
+    """
+    try:
+        rencontres, _ = recuperer_brut(jour, ttl=TTL_DIRECT_SECONDES)
+    except Exception as erreur:                     # jamais au prix de la page
+        _journal.info("Scores en direct du %s indisponibles : %s", jour, erreur)
+        return {}
+    return _indexer(rencontres, equipes, STATUTS_EN_COURS, jour)
+
+
+def annules(jour: str, equipes: list[str]) -> dict[tuple[str, str], dict]:
+    """Rencontres reportees, annulees ou arretees d'une date. Meme cache que `du_jour`."""
+    try:
+        rencontres, _ = recuperer_brut(jour)
+    except Exception as erreur:                     # jamais au prix de la page
+        _journal.info("Statuts du %s indisponibles : %s", jour, erreur)
+        return {}
+    return _indexer(rencontres, equipes, STATUTS_ANNULES, jour, score_requis=False)
+
+
+def _indexer(rencontres: list, equipes: list[str], statuts: frozenset[str],
+             jour: str, score_requis: bool = True) -> dict[tuple[str, str], dict]:
+    """Rencontres d'un des `statuts`, indexees par (domicile, exterieur) resolus."""
     index: dict[tuple[str, str], dict] = {}
     for rencontre in rencontres:
-        statut = (rencontre.get("fixture", {}).get("status", {}) or {}).get("short")
-        if statut not in STATUTS_TERMINES:
+        etat = (rencontre.get("fixture", {}).get("status", {}) or {})
+        statut = etat.get("short")
+        if statut not in statuts:
             continue
         score = _score(rencontre)
-        if score is None:
+        if score is None and score_requis:
             continue
         camps = rencontre.get("teams") or {}
         brut_dom = (camps.get("home") or {}).get("name", "")
@@ -152,7 +195,8 @@ def du_jour(jour: str, equipes: list[str],
             equipes)
         if dom and ext and dom != ext:
             index[(dom, ext)] = {
-                **score, "source": "api_football", "statut": statut, "jour": jour,
+                **(score or {}), "source": "api_football", "statut": statut, "jour": jour,
+                "minute": etat.get("elapsed"),
                 "fixture": (rencontre.get("fixture") or {}).get("id")}
     return index
 

@@ -44,10 +44,19 @@
       "football_data": [
         "AEK"
       ],
+      "football_data_org": [
+        "PAE AEK"
+      ],
       "odds_api": [
         "AEK Athens"
       ],
       "understat": []
+    },
+    "AGF Aarhus": {
+      "football_data": [
+        "Aarhus"
+      ],
+      "odds_api": []
     },
     "AZ Alkmaar": {
       "fbref": [],
@@ -74,6 +83,12 @@
       "football_data": [],
       "odds_api": [],
       "understat": []
+    },
+    "Akhmat Grozny": {
+      "api_football": [
+        "Akhmat"
+      ],
+      "football_data": []
     },
     "Alaves": {
       "fbref": [],
@@ -138,6 +153,12 @@
       "understat": [
         "Angers"
       ]
+    },
+    "Argentinos Juniors": {
+      "football_data": [
+        "Argentinos Jrs"
+      ],
+      "odds_api": []
     },
     "Aris Thessaloniki": {
       "fbref": [],
@@ -205,6 +226,12 @@
       ],
       "understat": []
     },
+    "Atlanta United FC": {
+      "football_data": [
+        "Atlanta Utd"
+      ],
+      "odds_api": []
+    },
     "Atletico Goianiense": {
       "api_football": [
         "Atletico Goianiense"
@@ -222,6 +249,9 @@
       "fbref": [],
       "football_data": [
         "Ath Madrid"
+      ],
+      "football_data_org": [
+        "Club Atlético de Madrid"
       ],
       "odds_api": [],
       "understat": []
@@ -252,6 +282,18 @@
       ],
       "understat": []
     },
+    "Atlético San Luis": {
+      "football_data": [
+        "Atl. San Luis"
+      ],
+      "odds_api": []
+    },
+    "Atlético Tucuman": {
+      "football_data": [
+        "Atl. Tucuman"
+      ],
+      "odds_api": []
+    },
     "Atromitos Athens": {
       "fbref": [],
       "football_data": [
@@ -267,6 +309,18 @@
       "football_data": [],
       "odds_api": [],
       "understat": []
+    },
+    "Austria Lustenau": {
+      "football_data": [
+        "A. Lustenau"
+      ],
+      "odds_api": []
+    },
+    "Austria Wien": {
+      "football_data": [
+        "Austria Vienna"
+      ],
+      "odds_api": []
     },
     "Auxerre": {
       "fbref": [
@@ -324,10 +378,36 @@
       "understat": []
     },
     "Bayern Munich": {
+      "api_football": [
+        "Bayern München"
+      ],
       "fbref": [],
       "football_data": [],
+      "football_data_org": [
+        "FC Bayern München"
+      ],
       "odds_api": [],
       "understat": []
+    },
+    "Beijing FC": {
+      "football_data": [
+        "Beijing Guoan"
+      ],
+      "odds_api": []
+    },
+    "Belgrano de Cordoba": {
+      "football_data": [
+        "Belgrano"
+      ],
+      "odds_api": []
+    },
+    "Benfica": {
+      "football_data": [
+        "Benfica"
+      ],
+      "football_data_org": [
+        "Sport Lisboa e Benfica"
+      ]
     },
     "Besiktas JK": {
       "fbref": [],
@@ -365,6 +445,17 @@
       "odds_api": [],
       "understat": []
     },
+    "Bodo/Glimt": {
+      "football_data": [
+        "Bodo/Glimt"
+      ],
+      "football_data_org": [
+        "FK Bodø/Glimt"
+      ],
+      "odds_api": [
+        "Bodø/Glimt"
+      ]
+    },
     "Bologna": {
       "fbref": [],
       "football_data": [],
@@ -396,6 +487,7 @@
       ]
     },
     "Borussia Dortmund": {
+      "api_football": [],
       "fbref": [],
       "football_data": [
         "Dortmund"
@@ -404,6 +496,7 @@
       "understat": []
     },
     "Borussia Monchengladbach": {
+      "api_football": [],
       "fbref": [],
       "football_data": [
         "M'gladbach"
@@ -596,6 +689,9 @@
       "understat": []
     },
     "Celta Fortuna": {
+      "api_football": [
+        "Celta de Vigo II"
+      ],
       "fbref": [],
       "football_data": [
         "Celta B"
@@ -677,6 +773,9 @@
     "Como": {
       "fbref": [],
       "football_data": [],
+      "football_data_org": [
+        "Como 1907"
+      ],
       "odds_api": [],
       "understat": []
     },
@@ -705,6 +804,12 @@
         "Coventry City"
       ],
       "understat": []
+    },
+    "Cracovia Kraków": {
+      "football_data": [
+        "Cracovia"
+      ],
+      "odds_api": []
     },
     "Cremonese": {
       "fbref": [],
@@ -750,6 +855,12 @@
       "odds_api": [],
       "understat": []
     },
+    "D.C. United": {
+      "football_data": [
+        "DC United"
+      ],
+      "odds_api": []
+    },
     "Darmstadt": {
       "fbref": [],
       "football_data": [],
@@ -766,6 +877,12 @@
       "odds_api": [],
       "understat": []
     },
+    "Deportivo Riestra": {
+      "football_data": [
+        "Dep. Riestra"
+      ],
+      "odds_api": []
+    },
     "Derby County": {
       "fbref": [],
       "football_data": [
@@ -776,6 +893,21 @@
       ],
       "understat": []
     },
+    "Dinamo Moscow": {
+      "api_football": [
+        "Dynamo"
+      ],
+      "football_data": [
+        "Dynamo Moscow"
+      ],
+      "odds_api": []
+    },
+    "Djurgardens IF": {
+      "football_data": [
+        "Djurgarden"
+      ],
+      "odds_api": []
+    },
     "Doncaster Rovers": {
       "fbref": [],
       "football_data": [
@@ -785,6 +917,12 @@
         "Doncaster Rovers"
       ],
       "understat": []
+    },
+    "Dundee United": {
+      "api_football": [
+        "Dundee Utd"
+      ],
+      "football_data": []
     },
     "Dynamo Dresden": {
       "fbref": [],
@@ -847,6 +985,12 @@
       "odds_api": [],
       "understat": []
     },
+    "Estudiantes": {
+      "football_data": [
+        "Estudiantes L.P."
+      ],
+      "odds_api": []
+    },
     "Everton": {
       "fbref": [
         "Everton"
@@ -867,6 +1011,18 @@
       "odds_api": [],
       "understat": []
     },
+    "FC Akron Tolyatti": {
+      "football_data": [
+        "Akron Togliatti"
+      ],
+      "odds_api": []
+    },
+    "FC Baltika Kaliningrad": {
+      "football_data": [
+        "Baltika"
+      ],
+      "odds_api": []
+    },
     "FC Cologne": {
       "fbref": [],
       "football_data": [
@@ -874,6 +1030,14 @@
       ],
       "odds_api": [],
       "understat": []
+    },
+    "FC Copenhagen": {
+      "football_data": [
+        "FC Copenhagen"
+      ],
+      "football_data_org": [
+        "FC København"
+      ]
     },
     "FC Energie Cottbus": {
       "fbref": [],
@@ -885,6 +1049,18 @@
       ],
       "understat": []
     },
+    "FC Lausanne-Sport": {
+      "football_data": [
+        "Lausanne"
+      ],
+      "odds_api": []
+    },
+    "FC Machida Zelvia": {
+      "football_data": [
+        "Machida"
+      ],
+      "odds_api": []
+    },
     "FC Schalke 04": {
       "fbref": [],
       "football_data": [
@@ -894,6 +1070,12 @@
         "FC Schalke 04"
       ],
       "understat": []
+    },
+    "Fakel Voronezh": {
+      "api_football": [
+        "Fakel"
+      ],
+      "football_data": []
     },
     "Falkirk F.C.": {
       "fbref": [],
@@ -956,6 +1138,12 @@
       "odds_api": [],
       "understat": []
     },
+    "Fredrikstad FK": {
+      "football_data": [
+        "Fredrikstad"
+      ],
+      "odds_api": []
+    },
     "Freiburg": {
       "fbref": [],
       "football_data": [],
@@ -991,6 +1179,12 @@
         "Gazişehir Gaziantep"
       ],
       "understat": []
+    },
+    "Gazovik Orenburg": {
+      "football_data": [
+        "Orenburg"
+      ],
+      "odds_api": []
     },
     "Genoa": {
       "fbref": [],
@@ -1040,6 +1234,12 @@
       "odds_api": [],
       "understat": []
     },
+    "Grasshopper Zürich": {
+      "football_data": [
+        "Grasshoppers"
+      ],
+      "odds_api": []
+    },
     "Gremio": {
       "fbref": [],
       "football_data": [],
@@ -1054,6 +1254,12 @@
       "odds_api": [],
       "understat": []
     },
+    "Guadalajara": {
+      "football_data": [
+        "Guadalajara Chivas"
+      ],
+      "odds_api": []
+    },
     "Guarani Campinas": {
       "api_football": [
         "Guarani Campinas"
@@ -1062,6 +1268,18 @@
       "football_data": [],
       "odds_api": [],
       "understat": []
+    },
+    "HJK Helsinki": {
+      "football_data": [
+        "HJK"
+      ],
+      "odds_api": []
+    },
+    "Halmstads BK": {
+      "football_data": [
+        "Halmstad"
+      ],
+      "odds_api": []
     },
     "Hamburger SV": {
       "fbref": [],
@@ -1081,6 +1299,12 @@
       ],
       "understat": []
     },
+    "Hearts": {
+      "api_football": [
+        "Heart Of Midlothian"
+      ],
+      "football_data": []
+    },
     "Heerenveen": {
       "fbref": [],
       "football_data": [],
@@ -1094,6 +1318,12 @@
       "understat": [
         "FC Heidenheim"
       ]
+    },
+    "Henan FC": {
+      "football_data": [
+        "Henan Songshan Longmen"
+      ],
+      "odds_api": []
     },
     "Heracles": {
       "fbref": [],
@@ -1143,6 +1373,36 @@
       ],
       "understat": []
     },
+    "IFK Goteborg": {
+      "football_data": [
+        "Goteborg"
+      ],
+      "odds_api": []
+    },
+    "IK Sirius": {
+      "football_data": [
+        "Sirius"
+      ],
+      "odds_api": []
+    },
+    "IK Start": {
+      "football_data": [
+        "Start"
+      ],
+      "odds_api": []
+    },
+    "Independiente Rivadavia": {
+      "football_data": [
+        "Ind. Rivadavia"
+      ],
+      "odds_api": []
+    },
+    "Instituto de Córdoba": {
+      "football_data": [
+        "Instituto"
+      ],
+      "odds_api": []
+    },
     "Inter": {
       "fbref": [],
       "football_data": [],
@@ -1182,6 +1442,18 @@
       "odds_api": [],
       "understat": []
     },
+    "JEF United Chiba": {
+      "football_data": [
+        "Chiba"
+      ],
+      "odds_api": []
+    },
+    "Jagiellonia Białystok": {
+      "football_data": [
+        "Jagiellonia"
+      ],
+      "odds_api": []
+    },
     "Juventude": {
       "fbref": [],
       "football_data": [
@@ -1196,6 +1468,12 @@
       "odds_api": [],
       "understat": []
     },
+    "KFUM": {
+      "football_data": [
+        "KFUM Oslo"
+      ],
+      "odds_api": []
+    },
     "KV Mechelen": {
       "fbref": [],
       "football_data": [
@@ -1206,6 +1484,12 @@
       ],
       "understat": []
     },
+    "Kalmar FF": {
+      "football_data": [
+        "Kalmar"
+      ],
+      "odds_api": []
+    },
     "Karlsruher SC": {
       "fbref": [],
       "football_data": [
@@ -1215,6 +1499,42 @@
         "Karlsruher SC"
       ],
       "understat": []
+    },
+    "Krasnodar": {
+      "api_football": [
+        "FC Krasnodar"
+      ],
+      "football_data": []
+    },
+    "Kryliya Sovetov": {
+      "football_data": [
+        "Krylya Sovetov"
+      ],
+      "odds_api": []
+    },
+    "KuPS Kuopio": {
+      "football_data": [
+        "KuPS"
+      ],
+      "odds_api": []
+    },
+    "Kyoto Purple Sanga": {
+      "football_data": [
+        "Kyoto"
+      ],
+      "odds_api": []
+    },
+    "LA Galaxy": {
+      "football_data": [
+        "Los Angeles Galaxy"
+      ],
+      "odds_api": []
+    },
+    "LASK": {
+      "api_football": [
+        "Lask Linz"
+      ],
+      "football_data": []
     },
     "Las Palmas": {
       "fbref": [],
@@ -1498,6 +1818,12 @@
       ],
       "understat": []
     },
+    "Mjällby AIF": {
+      "football_data": [
+        "Mjallby"
+      ],
+      "odds_api": []
+    },
     "Monaco": {
       "fbref": [
         "Monaco"
@@ -1634,6 +1960,12 @@
       ],
       "understat": []
     },
+    "OB Odense BK": {
+      "football_data": [
+        "Odense"
+      ],
+      "odds_api": []
+    },
     "Olympiakos Piraeus": {
       "fbref": [],
       "football_data": [
@@ -1686,6 +2018,9 @@
     "PSV Eindhoven": {
       "fbref": [],
       "football_data": [],
+      "football_data_org": [
+        "PSV"
+      ],
       "odds_api": [],
       "understat": []
     },
@@ -1755,6 +2090,9 @@
       "understat": []
     },
     "Peterborough United": {
+      "api_football": [
+        "Peterborough"
+      ],
       "fbref": [],
       "football_data": [
         "Peterboro"
@@ -1819,6 +2157,12 @@
         "RasenBallsport Leipzig"
       ]
     },
+    "RB Salzburg": {
+      "football_data": [
+        "Salzburg"
+      ],
+      "odds_api": []
+    },
     "Racing Santander": {
       "fbref": [],
       "football_data": [
@@ -1828,6 +2172,18 @@
         "Real Racing Club de Santander"
       ],
       "understat": []
+    },
+    "Raków Częstochowa": {
+      "football_data": [
+        "Rakow"
+      ],
+      "odds_api": []
+    },
+    "Rapid Wien": {
+      "football_data": [
+        "SK Rapid"
+      ],
+      "odds_api": []
     },
     "Rayo Vallecano": {
       "fbref": [],
@@ -1868,6 +2224,9 @@
       "understat": []
     },
     "Real Sociedad B": {
+      "api_football": [
+        "Real Sociedad II"
+      ],
       "fbref": [],
       "football_data": [
         "Sociedad B"
@@ -1935,6 +2294,15 @@
         "Rennes"
       ]
     },
+    "Rheindorf Altach": {
+      "api_football": [
+        "SCR Altach"
+      ],
+      "football_data": [
+        "Altach"
+      ],
+      "odds_api": []
+    },
     "Rodez AF": {
       "fbref": [],
       "football_data": [
@@ -1944,6 +2312,12 @@
         "Rodez AF"
       ],
       "understat": []
+    },
+    "Rodina Moscow": {
+      "api_football": [
+        "Rodina Moskva"
+      ],
+      "football_data": []
     },
     "Roma": {
       "fbref": [],
@@ -1961,7 +2335,16 @@
       ],
       "understat": []
     },
+    "Rubin Kazan": {
+      "api_football": [
+        "Rubin"
+      ],
+      "football_data": []
+    },
     "SC Paderborn": {
+      "api_football": [
+        "SC Paderborn 07"
+      ],
       "fbref": [],
       "football_data": [
         "Paderborn"
@@ -2019,6 +2402,12 @@
       ],
       "understat": []
     },
+    "Sarpsborg FK": {
+      "football_data": [
+        "Sarpsborg 08"
+      ],
+      "odds_api": []
+    },
     "Sassuolo": {
       "fbref": [],
       "football_data": [],
@@ -2030,6 +2419,18 @@
       "football_data": [],
       "odds_api": [],
       "understat": []
+    },
+    "Shandong Luneng Taishan FC": {
+      "football_data": [
+        "Shandong Taishan"
+      ],
+      "odds_api": []
+    },
+    "Shanghai SIPG FC": {
+      "football_data": [
+        "Shanghai Port"
+      ],
+      "odds_api": []
     },
     "Sheffield United": {
       "fbref": [
@@ -2046,6 +2447,12 @@
         "Sheffield United"
       ]
     },
+    "Shenzhen Peng City FC": {
+      "football_data": [
+        "Shenzhen Xinpengcheng"
+      ],
+      "odds_api": []
+    },
     "Southampton": {
       "fbref": [
         "Southampton"
@@ -2060,6 +2467,14 @@
         "Southampton"
       ]
     },
+    "Sp Braga": {
+      "football_data": [
+        "Sp Braga"
+      ],
+      "football_data_org": [
+        "Sporting Clube de Braga"
+      ]
+    },
     "Sparta Rotterdam": {
       "fbref": [],
       "football_data": [],
@@ -2072,7 +2487,10 @@
         "Sport Recife"
       ],
       "odds_api": [],
-      "understat": []
+      "understat": [],
+      "espn": [
+        "Sport"
+      ]
     },
     "Sporting Gijón": {
       "fbref": [],
@@ -2089,10 +2507,21 @@
       "football_data": [
         "Sp Lisbon"
       ],
+      "football_data_org": [
+        "Sporting Clube de Portugal"
+      ],
       "odds_api": [
         "Sporting Lisbon"
       ],
       "understat": []
+    },
+    "St. Gilloise": {
+      "football_data": [
+        "St. Gilloise"
+      ],
+      "football_data_org": [
+        "Royale Union Saint-Gilloise"
+      ]
     },
     "St. Pauli": {
       "fbref": [],
@@ -2123,6 +2552,9 @@
       "understat": []
     },
     "Stockport County FC": {
+      "api_football": [
+        "Stockport County"
+      ],
       "fbref": [],
       "football_data": [
         "Stockport"
@@ -2189,11 +2621,29 @@
       ],
       "understat": []
     },
+    "Talleres": {
+      "football_data": [
+        "Talleres Cordoba"
+      ],
+      "odds_api": []
+    },
     "Telstar": {
       "fbref": [],
       "football_data": [],
       "odds_api": [],
       "understat": []
+    },
+    "Tigres": {
+      "football_data": [
+        "Tigres UANL"
+      ],
+      "odds_api": []
+    },
+    "Tokyo Verdy": {
+      "football_data": [
+        "Verdy"
+      ],
+      "odds_api": []
     },
     "Torino": {
       "fbref": [],
@@ -2300,6 +2750,12 @@
       ],
       "understat": []
     },
+    "VPS Vaasa": {
+      "football_data": [
+        "VPS"
+      ],
+      "odds_api": []
+    },
     "Valencia": {
       "fbref": [],
       "football_data": [],
@@ -2319,6 +2775,12 @@
       ],
       "understat": []
     },
+    "Velez Sarsfield BA": {
+      "football_data": [
+        "Velez Sarsfield"
+      ],
+      "odds_api": []
+    },
     "Venezia": {
       "fbref": [],
       "football_data": [],
@@ -2334,6 +2796,20 @@
         "Hellas Verona"
       ],
       "understat": []
+    },
+    "Viborg FF": {
+      "football_data": [
+        "Viborg"
+      ],
+      "odds_api": []
+    },
+    "Viking": {
+      "football_data": [
+        "Viking"
+      ],
+      "odds_api": [
+        "Viking FK"
+      ]
     },
     "Vila Nova": {
       "api_football": [
@@ -2383,6 +2859,15 @@
         "Volos FC"
       ],
       "understat": []
+    },
+    "WSG Tirol": {
+      "api_football": [
+        "WSG Wattens"
+      ],
+      "football_data": [
+        "Tirol"
+      ],
+      "odds_api": []
     },
     "Waalwijk": {
       "fbref": [],
@@ -2434,6 +2919,18 @@
         "West Ham"
       ]
     },
+    "Westerlo": {
+      "api_football": [
+        "KVC Westerlo"
+      ],
+      "football_data": []
+    },
+    "Widzew Łódź": {
+      "football_data": [
+        "Widzew Lodz"
+      ],
+      "odds_api": []
+    },
     "Wigan Athletic": {
       "fbref": [],
       "football_data": [
@@ -2449,6 +2946,21 @@
       "football_data": [],
       "odds_api": [],
       "understat": []
+    },
+    "Wisła Kraków": {
+      "api_football": [
+        "Wisla Krakow"
+      ],
+      "football_data": [
+        "Wisla"
+      ],
+      "odds_api": []
+    },
+    "Wisła Płock": {
+      "football_data": [
+        "Wisla Plock"
+      ],
+      "odds_api": []
     },
     "Wolfsburg": {
       "fbref": [],
@@ -2481,6 +2993,24 @@
       ],
       "understat": []
     },
+    "Zagłębie Lubin": {
+      "football_data": [
+        "Zaglebie"
+      ],
+      "odds_api": []
+    },
+    "Zenit St Petersburg": {
+      "football_data": [
+        "Zenit"
+      ],
+      "odds_api": []
+    },
+    "Zhejiang": {
+      "football_data": [
+        "Zhejiang Professional"
+      ],
+      "odds_api": []
+    },
     "Zwolle": {
       "fbref": [],
       "football_data": [],
@@ -2508,6 +3038,73 @@
         "Çorum FK"
       ],
       "understat": []
+    },
+    "Örgryte IS": {
+      "football_data": [
+        "Orgryte"
+      ],
+      "odds_api": []
+    },
+    "Śląsk Wrocław": {
+      "football_data": [
+        "Slask Wroclaw"
+      ],
+      "odds_api": []
+    },
+    "Al Faisaly": {
+      "football_data": [],
+      "fbref": [],
+      "understat": [],
+      "odds_api": [
+        "Al-Faisaly KSA FC"
+      ],
+      "espn": [
+        "Al Faisaly"
+      ]
+    },
+    "Al Diriyah": {
+      "football_data": [],
+      "fbref": [],
+      "understat": [],
+      "odds_api": [
+        "Diriyah Club"
+      ],
+      "espn": [
+        "Al Diriyah"
+      ]
+    },
+    "Everton CD": {
+      "football_data": [],
+      "fbref": [],
+      "understat": [],
+      "odds_api": [
+        "Everton de Viña del Mar"
+      ],
+      "espn": [
+        "Everton CD"
+      ]
+    },
+    "Universidad Católica": {
+      "football_data": [],
+      "fbref": [],
+      "understat": [],
+      "odds_api": [
+        "Universidad Católica (CHI)"
+      ],
+      "espn": [
+        "Universidad Católica"
+      ]
+    },
+    "Náutico": {
+      "football_data": [],
+      "fbref": [],
+      "understat": [],
+      "odds_api": [
+        "Nautico PE"
+      ],
+      "espn": [
+        "Náutico"
+      ]
     }
   },
   "sources": [
@@ -2515,7 +3112,9 @@
     "fbref",
     "understat",
     "odds_api",
-    "api_football"
+    "api_football",
+    "football_data_org",
+    "espn"
   ],
   "version": 1
 }

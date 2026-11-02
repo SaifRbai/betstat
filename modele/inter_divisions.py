@@ -147,7 +147,8 @@ def entrainer(championnat: str, saisons: int = 4,
     parametres = calibration.charger_hyperparametres(championnat) or {}
     modele = dc.entrainer(
         matchs, cible="buts",
-        xi=xi if xi is not None else parametres.get("xi", dc.XI_DEFAUT))
+        xi=xi if xi is not None else parametres.get("xi", dc.XI_DEFAUT),
+        regularisation=parametres.get("regularisation"))
     _journal.info("Modele inter-divisions %s", rapport.resume())
     return modele, rapport
 

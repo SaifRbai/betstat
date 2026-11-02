@@ -244,3 +244,23 @@ def test_un_cache_ancien_sans_colonne_lien_reste_lisible() -> None:
     tableau = cotes.normaliser([_evenement_avec_lien()], "F1").drop(columns=["lien"])
     detail = cotes.par_bookmaker(tableau, tableau["date"].iloc[0], "Lens", "Auxerre")
     assert detail and detail[0]["lien"] is None
+
+
+def test_derniers_instantanes_d_une_journee(tmp_path: Path) -> None:
+    """Un match sorti du flux revient avec ses dernieres cotes, et lui seul."""
+    base = tmp_path / "hist.db"
+    tableau = cotes.normaliser([EVENEMENT], "F1")
+    tableau["horodatage"] = "2026-09-01T10:00:00"
+    cotes.historiser(tableau, base)
+    tardif = tableau.copy()
+    tardif["horodatage"] = "2026-09-01T18:45:00"
+    cotes.historiser(tardif, base)
+
+    debut = str(tableau["date"].iloc[0].normalize())
+    fin = str(tableau["date"].iloc[0].normalize() + pd.Timedelta(days=1))
+    repris = cotes.derniers_instantanes("F1", debut, fin, chemin_db=base)
+    assert set(repris["horodatage"]) == {"2026-09-01T18:45:00"}
+    assert len(repris) == len(tableau)
+    assert list(repris.columns) == list(cotes.COLONNES_COTES)
+    assert cotes.derniers_instantanes("F1", fin, "2030-01-01", chemin_db=base).empty
+    assert cotes.derniers_instantanes("E0", debut, fin, chemin_db=base).empty

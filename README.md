@@ -141,6 +141,27 @@ Ces estimations sont marquees « inter-divisions » dans la page : **ni la
 calibration ni le ROI mesures sur un championnat ne s'y appliquent**, et les
 comptes annexes (corners, cartons) y sont volontairement absents.
 
+### Coupes nationales et coupes d'Europe
+
+Le selecteur propose aussi les coupes cotees par The Odds API : **Ligue des
+champions, Ligue Europa, Ligue Conference** (groupe « Coupes d'Europe ») et
+**FA Cup, EFL Cup, Copa del Rey, Coppa Italia, DFB-Pokal, Coupe de France**
+(sous leur pays). Aucune coupe n'a de modele a elle (`config.COUPES`) :
+
+- une coupe nationale emprunte le modele inter-divisions de son pays, ou a
+  defaut celui de la premiere division ;
+- une coupe d'Europe emprunte `modele/europe.py`, un modele commun aux
+  premieres divisions europeennes, mises a la meme echelle par les matchs de
+  **Ligue des champions** de football-data.org (`data/europe.py`, plan gratuit,
+  cle `FOOTBALL_DATA_ORG_KEY`). Un championnat n'est retenu que s'il totalise au
+  moins dix matchs europeens contre ceux deja retenus ; les clubs des autres
+  (Ukraine, Suede, Pologne...) sont ecartes plutot que devines. Premier
+  chargement : environ une minute d'entrainement, puis garde en memoire.
+
+Chaque carte de coupe est marquee « coupe » : **ni calibration ni ROI n'ont ete
+mesures sur des matchs de coupe**, et le modele ignore le contexte d'un tour a
+elimination directe. Corners et cartons n'y sont pas proposes.
+
 **Guide pratique complet : [`doc/UTILISATION.md`](doc/UTILISATION.md)** — chaque
 commande avec sa sortie reelle, la routine hebdomadaire, le budget du quota API,
 l'automatisation des cotes de cloture et les problemes courants.
@@ -236,6 +257,19 @@ est utilise a la place.
   Exemple reel du danger : l'algorithme a propose `Ath Madrid ~ Real Madrid`
   (similarite 0.59). Accepte en silence, cela aurait fausse tout le modele
   espagnol sans qu'aucun test de coherence ne le detecte.
+- **Championnats hors Europe (ESPN)** : Colombie, Equateur, Perou, Uruguay,
+  Paraguay, Bolivie, Venezuela, Costa Rica, Guatemala, Honduras, Salvador et
+  Afrique du Sud ont leurs resultats et leur calendrier tires d'ESPN
+  (`data/espn.py`, sans cle ni quota, API non documentee). **Aucun bookmaker
+  de The Odds API ne les cote** : leurs pronos sont ceux du modele seul, sans
+  comparaison au marche, sans valeur detectee ni mise, et hors des combines.
+  L'Arabie saoudite, le Chili et l'Australie prennent aussi leurs resultats
+  chez ESPN, mais sont cotes normalement. Les historiques ESPN n'ont ni
+  corners, ni cartons, ni score a la mi-temps.
+- **Ligues arabes hors Arabie saoudite** (Egypte, Maroc, Qatar, Emirats,
+  Algerie, Tunisie) : absentes. Aucune source gratuite n'a leurs resultats
+  recents (ESPN ne les couvre pas, le plan gratuit d'API-Football s'arrete a
+  2024, TheSportsDB gratuit plafonne a 15 matchs par saison).
 - **Quota Odds API** : 500 requetes par mois. Une requete couvre tous les matchs
   d'un championnat, le cache dure 15 minutes, et un compteur local avertit a 400.
 - **CLV** : ne peut etre calcule que si les cotes ont ete historisees **avant**

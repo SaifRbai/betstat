@@ -144,3 +144,25 @@ def test_le_score_porte_l_identifiant_pour_aller_chercher_les_comptes(sans_resea
                   "fixture": {"id": 1552733, "status": {"short": "FT"}}}])
     index = scores.du_jour("2026-08-21", ["Marseille", "Strasbourg"])
     assert index[("Marseille", "Strasbourg")]["fixture"] == 1552733
+
+
+def test_le_direct_donne_le_score_et_la_minute(monkeypatch):
+    """Les matchs en cours, et eux seuls, avec la minute de jeu."""
+    en_cours = _rencontre("Marseille", "Strasbourg", 1, 0, "2H")
+    en_cours["fixture"]["status"]["elapsed"] = 67
+    monkeypatch.setattr(scores, "recuperer_brut",
+                        lambda jour, forcer=False, ttl=None: (
+                            [en_cours, _rencontre("Lens", "Lille", 2, 1)], True))
+    index = scores.en_direct("2026-08-21", ["Marseille", "Strasbourg", "Lens", "Lille"])
+    assert list(index) == [("Marseille", "Strasbourg")]
+    assert index[("Marseille", "Strasbourg")]["minute"] == 67
+    assert index[("Marseille", "Strasbourg")]["statut"] == "2H"
+
+
+def test_un_match_reporte_est_repere_sans_score(sans_reseau):
+    """Sans ce statut, un match reporte passerait pour en cours a l'heure dite."""
+    sans_reseau([_rencontre("Marseille", "Strasbourg", None, None, "PST"),
+                 _rencontre("Lens", "Lille", 1, 0, "2H")])
+    index = scores.annules("2026-08-21", ["Marseille", "Strasbourg", "Lens", "Lille"])
+    assert list(index) == [("Marseille", "Strasbourg")]
+    assert index[("Marseille", "Strasbourg")]["statut"] == "PST"

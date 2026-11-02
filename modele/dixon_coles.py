@@ -32,6 +32,12 @@ TAILLE_MATRICE = 12          # scores 0 a 11 par equipe
 XI_DEFAUT = 0.0018           # demi-vie d'environ 385 jours
 POIDS_XG_DEFAUT = 0.7
 BORNE_RHO = 0.35
+# Penalite L2 sur attaque/defense (retrecissement vers la moyenne du championnat).
+# Mesure walk-forward sur 4 saisons, log-loss 1N2 du modele, sans -> avec 3 :
+# F1 0.9997->0.985, D1 1.034->1.004, E0 1.027->1.011, N1 1.014->0.997,
+# SP1 0.981->0.976, I1 0.965->0.968. La valeur par championnat est recalibree
+# par `cli.py calibrer` (cle "regularisation" des hyperparametres).
+REGULARISATION_DEFAUT = 3.0
 
 
 # --------------------------------------------------------------------------
@@ -293,8 +299,14 @@ def entrainer(
     xi: float = XI_DEFAUT,
     force_domicile_separee: bool = False,
     date_reference: pd.Timestamp | None = None,
+    regularisation: float | None = None,
 ) -> ModeleDixonColes:
-    """Estime les parametres par maximum de vraisemblance ponderee (L-BFGS-B)."""
+    """Estime les parametres par maximum de vraisemblance ponderee (L-BFGS-B).
+
+    `regularisation` : penalite L2 sur les forces d'equipe (voir REGULARISATION_DEFAUT).
+    """
+    if regularisation is None:
+        regularisation = REGULARISATION_DEFAUT
     matchs = matchs.dropna(subset=["dom", "ext", "buts_dom", "buts_ext"]).reset_index(drop=True)
     if len(matchs) < 20:
         raise ValueError(
@@ -317,7 +329,8 @@ def entrainer(
         mu = np.clip(mu, 1e-8, 25.0)
         log_v = _log_poisson_continu(y_dom, lam) + _log_poisson_continu(y_ext, mu)
         log_v = log_v + _log_tau(buts_dom, buts_ext, lam, mu, rho)
-        return -float(np.sum(poids * log_v))
+        penalite = regularisation * float(np.sum(parametres[:-2] ** 2))
+        return -float(np.sum(poids * log_v)) + penalite
 
     taille = (4 * n if force_domicile_separee else 2 * n) + 2
     depart = np.zeros(taille)

@@ -256,6 +256,41 @@ def test_le_bresil_se_charge_depuis_le_fichier_unique(
     assert df["cote_2_max"].tolist() == [4.6, 2.0]
 
 
+CSV_SAISON_A_CHEVAL = (
+    "﻿Country,League,Season,Date,Time,Home,Away,HG,AG,Res,AvgCH,AvgCD,AvgCA\n"
+    "Austria,Bundesliga,2024/2025,02/08/2024,19:30,Salzburg,Rapid Vienna,2,1,H,1.6,4.0,5.0\n"
+    "Austria,Bundesliga,2025/2026,01/08/2025,19:30,Sturm Graz,LASK,1,1,D,1.9,3.5,4.0\n"
+    "Austria,Bundesliga,2026/2027,25/10/2026,17:00,LASK,Salzburg,0,2,A,3.1,3.6,2.1\n"
+)
+
+
+def test_un_fichier_unique_a_cheval_sur_deux_annees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Season "2026/2027" : decoupe selon les codes saison europeens ("2627")."""
+    monkeypatch.setattr(resultats.config, "DOSSIER_CACHE_RESULTATS", tmp_path)
+    (tmp_path / "AUT_tout.csv").write_text(CSV_SAISON_A_CHEVAL, encoding="utf-8")
+    monkeypatch.setattr(resultats.requests, "get", lambda *a, **k: pytest.fail("reseau"))
+
+    df = resultats.charger("AUT", 2, aujourdhui=date(2026, 10, 31))
+    assert df["saison"].tolist() == ["2526", "2627"]          # 2024/2025 hors fenetre
+    assert df["dom"].tolist() == ["Sturm Graz", "LASK"]
+    assert df["cote_1"].tolist() == [1.9, 3.1]
+
+
+def test_un_passage_de_l_annee_civile_a_une_saison_a_cheval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Japon : "2025" puis "2026/2027" ; la saison civile garde son historique."""
+    monkeypatch.setattr(resultats.config, "DOSSIER_CACHE_RESULTATS", tmp_path)
+    csv = CSV_SAISON_A_CHEVAL.replace("2025/2026", "2025")
+    (tmp_path / "AUT_tout.csv").write_text(csv, encoding="utf-8")
+    monkeypatch.setattr(resultats.requests, "get", lambda *a, **k: pytest.fail("reseau"))
+
+    df = resultats.charger("AUT", 2, aujourdhui=date(2026, 10, 31))
+    assert df["saison"].tolist() == ["2526", "2627"]
+
+
 def test_le_fichier_unique_perime_comme_la_saison_en_cours(tmp_path):
     """Il contient la saison en cours : il ne doit pas etre fige pour toujours."""
     chemin = tmp_path / "BRA_tout.csv"
@@ -267,8 +302,18 @@ def test_le_fichier_unique_perime_comme_la_saison_en_cours(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# Serie B bresilienne : API-Football converti au format football-data
+# API-Football converti au format football-data
 # --------------------------------------------------------------------------
+# La Serie B passe desormais par ESPN, mais le chemin API-Football reste pour
+# un abonnement payant : on le teste sur une Serie B declaree comme avant.
+
+@pytest.fixture(autouse=True)
+def _serie_b_api_football(request, monkeypatch) -> None:
+    if "api_football" in request.node.name:
+        monkeypatch.setitem(resultats.config.CHAMPIONNATS, "BRB", {
+            "nom": "Brasileirao Serie B", "pays": "Bresil",
+            "odds": "soccer_brazil_serie_b", "fbref": None, "understat": None,
+            "annee_civile": True, "api_football": 72})
 
 def _match_api_football(jour: str, dom: str, ext: str, buts: tuple, statut: str = "FT") -> dict:
     return {
@@ -307,7 +352,7 @@ def test_la_serie_b_vient_d_api_football(tmp_path, monkeypatch) -> None:
     assert absences.lire_compteur()["appels"] == 1
 
 
-def test_une_saison_hors_abonnement_ne_casse_rien(tmp_path, monkeypatch) -> None:
+def test_une_saison_hors_abonnement_api_football_ne_casse_rien(tmp_path, monkeypatch) -> None:
     """Le plan gratuit refuse 2025 : un historique vide, et pas de nouvel appel avant 6 h."""
     from data import absences
 
@@ -341,3 +386,28 @@ def test_un_historique_api_football_trop_ancien_n_est_pas_utilise(tmp_path, monk
     monkeypatch.setattr(absences, "_appeler", appel)
     assert resultats.charger("BRB", 4, aujourdhui=date(2026, 10, 26)).empty
     assert not resultats.charger("BRB", 4, aujourdhui=date(2025, 3, 1)).empty   # 2024 = la precedente
+
+
+def test_la_serie_b_vient_d_espn_avec_les_noms_de_la_serie_a(tmp_path, monkeypatch) -> None:
+    """Un club relegue garde son nom football-data : c'est le pont inter-divisions."""
+    from data import espn
+
+    assert resultats.config.CHAMPIONNATS["BRB"]["espn"] == "bra.2"
+    monkeypatch.setattr(resultats.config, "DOSSIER_CACHE_RESULTATS", tmp_path)
+
+    def evenement(jour, dom, ext, buts):
+        return {"date": f"{jour}T22:00Z",
+                "status": {"type": {"name": "STATUS_FULL_TIME", "state": "post",
+                                    "completed": True}},
+                "competitions": [{"competitors": [
+                    {"homeAway": "home", "team": {"displayName": dom}, "score": str(buts[0])},
+                    {"homeAway": "away", "team": {"displayName": ext}, "score": str(buts[1])},
+                ]}]}
+
+    matchs = [evenement("2025-04-19", "Atletico Goianiense", "Sport", (2, 0)),
+              evenement("2025-04-20", "Chapecoense", "TBD Home", (0, 0)),
+              evenement("2025-04-21", "Novorizontino", "Avai", (1, 1))] * 3
+    monkeypatch.setattr(espn, "_appeler", lambda slug, annee: matchs if annee == 2025 else [])
+    df = resultats.charger("BRB", 1, aujourdhui=date(2025, 12, 31))
+    assert set(df["dom"]) == {"Atletico GO", "Novorizontino"}      # TBD ecarte
+    assert "Sport Recife" in set(df["ext"])

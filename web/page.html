@@ -221,6 +221,19 @@
   .cartouche ul { margin: 6px 0 0; padding-left: 18px; }
   .cartouche li { margin: 3px 0; font-size: 13px; }
   .cartouche .cout { color: var(--doux); font-size: 12px; }
+  .choix-sur {
+    grid-column: 1 / -1; border: 2px solid var(--accent); border-radius: 8px;
+    padding: 8px 12px; margin: 6px 0 2px; font-size: 13px;
+  }
+  .choix-sur.fragile-choix { border-color: #c77700; }
+  .choix-sur.aucun { border-color: var(--trait); color: var(--doux); }
+  .choix-sur .tete { font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--doux); margin-bottom: 2px; }
+  .choix-sur .pari { font-size: 15px; font-weight: 700; }
+  .choix-sur .chiffres { margin-top: 2px; }
+  .choix-sur .chiffres b { font-weight: 650; }
+  .choix-sur .comment, .choix-sur .autres, .choix-sur .mise-en-garde {
+    color: var(--doux); font-size: 12px; margin-top: 3px; }
   .chiffresLigne {
     display: flex; flex-wrap: wrap; gap: 18px; font-size: 12px;
     font-variant-numeric: tabular-nums; margin: 2px;
@@ -299,6 +312,35 @@
   }
   .score .attente { font-weight: 500; color: var(--doux); font-size: 12px; }
   .bilan-verdict { color: var(--doux); font-size: 12px; margin-left: 6px; }
+
+  /* --- Statut des matchs du jour : termines, en direct, a venir ----------- */
+  .filtre-statut { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
+  .filtre-statut[hidden] { display: none; }
+  .filtre-statut button {
+    background: var(--carte); border: 1px solid var(--trait); border-radius: 18px;
+    padding: 5px 12px; color: var(--doux); font-size: 13px; font-weight: 550;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .filtre-statut button:hover:not(:disabled) { color: var(--encre); }
+  .filtre-statut button[aria-pressed="true"] {
+    color: var(--fond); background: var(--encre); border-color: var(--encre);
+  }
+  .filtre-statut button:disabled { opacity: .45; cursor: default; }
+  .filtre-statut .n { font-variant-numeric: tabular-nums; font-weight: 700; }
+  .filtre-heures .titre-filtre { align-self: center; color: var(--doux); font-size: 13px; }
+  .maj-direct { align-self: center; margin-left: 4px; color: var(--doux); font-size: 12px; }
+  .statut {
+    display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+    font-weight: 700; margin-right: 6px; letter-spacing: .02em;
+  }
+  .statut.en_cours { background: var(--rate); color: var(--rate-encre); }
+  .statut.en_cours::before {
+    content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; margin-right: 5px; vertical-align: 1px;
+    animation: respire 1.4s ease-in-out infinite;
+  }
+  .statut.termine { background: var(--creux); color: var(--doux); }
+  .statut.annule { background: var(--alerte); color: var(--encre); }
 
   /* --- Reglages du combine ------------------------------------------------
      La mise et l'objectif se reglent dans la vue qui les utilise, pas dans
@@ -468,6 +510,7 @@
     .vue { animation: none; }
     .nav-site { transition: none; }
     .squelette { animation: none; }
+    .statut.en_cours::before { animation: none; }
     .jambe-carte:hover, .tuile:hover { transform: none; }
     .marqueur-max { transition: none; }
   }
@@ -598,6 +641,26 @@
          jour, les memes que dans l'onglet Equipes fortes. -->
     <div id="combines-aujourdhui" hidden></div>
     <h2><span id="titre-matchs">Matchs a venir</span> <span class="compte" id="compte-matchs"></span></h2>
+    <!-- Ne s'affiche que si au moins un match est commence : sur une liste de
+         matchs a venir, trois boutons vides ne diraient rien. -->
+    <div id="filtre-statut" class="filtre-statut" role="group"
+         aria-label="Filtrer par statut" hidden>
+      <button type="button" data-statut="" aria-pressed="true">Tous <span class="n"></span></button>
+      <button type="button" data-statut="termine" aria-pressed="false">Termines <span class="n"></span></button>
+      <button type="button" data-statut="en_cours" aria-pressed="false">En direct <span class="n"></span></button>
+      <button type="button" data-statut="a_venir" aria-pressed="false">A venir <span class="n"></span></button>
+      <span id="maj-direct" class="maj-direct" aria-live="polite"></span>
+    </div>
+    <!-- Fenetre de coup d'envoi : seulement les matchs qui commencent dans les
+         N prochaines heures. Les compteurs se recalculent a chaque affichage. -->
+    <div id="filtre-heures" class="filtre-statut filtre-heures" role="group"
+         aria-label="Filtrer par heure de coup d'envoi" hidden>
+      <span class="titre-filtre">Coup d'envoi dans :</span>
+      <button type="button" data-heures="0" aria-pressed="true">Tout <span class="n"></span></button>
+      <button type="button" data-heures="2" aria-pressed="false">2 h <span class="n"></span></button>
+      <button type="button" data-heures="6" aria-pressed="false">6 h <span class="n"></span></button>
+      <button type="button" data-heures="8" aria-pressed="false">8 h <span class="n"></span></button>
+    </div>
     <div id="matchs"></div>
     <div id="rapport-ligues" class="progression" hidden></div>
     <div id="ecartes" class="vide" hidden></div>
@@ -809,6 +872,10 @@ function tableauBookmakers(m) {
   }
   const lignes = m.detail_bookmakers;
   const best = m.meilleures_cotes || {};
+  if (!m.bookmakers) {
+    return `<div class="vide">Aucun bookmaker ne cote ce championnat : les
+      probabilites affichees sont celles du modele seul.</div>`;
+  }
   if (!lignes.length) {
     return `<div class="vide">Ces ${m.bookmakers} bookmakers cotent le match, mais
       aucune de leurs cotes n'est lisible dans le cache. Rafraichis les cotes.</div>`;
@@ -1228,13 +1295,37 @@ function blocInterDivisions(m) {
   </div>`;
 }
 
+// Un match de coupe. Aucune coupe n'a de modele a elle : celui-ci est emprunte
+// aux championnats, et ce qu'il vaut sur une coupe n'a jamais ete mesure.
+function blocCoupe(m) {
+  const c = m.coupe;
+  if (!c) return "";
+  const lien = c.type === "europe"
+    ? `Ces championnats sont mis a la meme echelle par ${c.matchs_europeens} matchs
+       de Ligue des champions (football-data.org) : c'est peu, et l'ecart de niveau
+       entre deux pays en depend entierement.${c.ecartes && c.ecartes.length
+         ? ` Ecartes faute de matchs europeens en nombre suffisant : ${c.ecartes.join(", ")}.`
+         : ""}`
+    : c.championnats.length > 1
+      ? `Les divisions du pays sont reliees par les equipes promues et releguees.`
+      : `Un seul championnat exploitable : un club d'une autre division n'est pas estimable.`;
+  return `<div class="avertissement">
+    <strong>Match de coupe.</strong> Estime par un modele entraine sur
+    ${c.championnats.join(" + ")} (${c.matchs} matchs, ${c.equipes} equipes).
+    <div style="margin-top:6px">${lien}</div>
+    <div style="margin-top:6px"><strong>Ni calibration ni ROI n'ont ete mesures sur des
+    matchs de coupe</strong>, et le modele ignore le contexte d'un tour a elimination
+    directe (rotation, match retour, terrain neutre). Corners et cartons absents.</div>
+  </div>`;
+}
+
 function panneauStats(m) {
   if (m.pronos === undefined) {
     return `<div class="vide">Ce serveur ne renvoie pas encore les statistiques
       detaillees : il a ete demarre avant cette version. Relance-le
       (Ctrl+C puis <code>python web.py</code>).</div>`;
   }
-  return `${blocInterDivisions(m)}<h3>Pronos les plus probables</h3>${blocPlusSurs(m)}
+  return `${blocCoupe(m)}${blocInterDivisions(m)}<h3>Pronos les plus probables</h3>${blocPlusSurs(m)}
     <h3>Tous les marches, du plus probable au moins probable</h3>${tableauPronos(m)}
     ${tableauStats(m)}
     ${tableauAnnexes(m)}`;
@@ -1258,7 +1349,18 @@ function brancherPanneau(carte, nom, construire) {
 // frequent : football-data publie par lots, avec deux a treize jours de retard
 // selon la ligue. Se taire laisserait croire que le match n'a pas eu lieu.
 function blocScore(m) {
-  if (!m.joue) return "";
+  if (!m.joue || m.statut === "annule") return "";
+  if (m.statut === "en_cours") {
+    // Score du moment, relu au plus toutes les dix minutes : il n'est jamais
+    // confronte aux pronos, un match en cours ne juge encore rien.
+    const d = m.direct;
+    return d
+      ? `<span class="score" title="Score API-Football, mis a jour toutes les dix minutes au plus">${
+          d.buts_dom} – ${d.buts_ext}<span class="attente">${
+          d.statut === "HT" ? "mi-temps" : d.minute ? d.minute + "'" : ""}</span></span>`
+      : `<span class="score"><span class="attente">en cours — score indisponible,
+          statut deduit de l'heure du coup d'envoi</span></span>`;
+  }
   if (!m.resultat) {
     // Meme piege que pour le detail des bookmakers : `web/page.html` est relu a
     // chaque requete, `web.py` seulement au demarrage. Une page neuve devant un
@@ -1288,6 +1390,70 @@ function blocScore(m) {
   return `<span class="score" title="${source}">${r.buts_dom} – ${r.buts_ext}</span>${compte}`;
 }
 
+const LIBELLES_STATUT = { en_cours: "EN DIRECT", termine: "TERMINE" };
+// Codes API-Football d'un match qui n'aura pas lieu, ou pas jusqu'au bout.
+const LIBELLES_ANNULATION = { PST: "REPORTE", CANC: "ANNULE", ABD: "ARRETE",
+                              AWD: "TAPIS VERT", WO: "FORFAIT" };
+
+function pastilleStatut(m) {
+  const libelle = m.statut === "annule"
+    ? LIBELLES_ANNULATION[m.annulation] || "ANNULE" : LIBELLES_STATUT[m.statut];
+  return libelle ? `<span class="statut ${m.statut}">${libelle}</span>` : "";
+}
+
+// La ligne d'en-tete d'une carte : la seule qui change pendant un match.
+function enteteEquipes(m) {
+  return `${pastilleStatut(m)}${m.ligue ? `<span class="ligue">${m.ligue}</span>` : ""}${
+    m.inter_divisions ? `<span class="inter" title="Estime par le modele commun aux divisions ${
+      m.inter_divisions.divisions.join("+")} — calibration non mesuree">inter-divisions</span>` : ""
+  }${m.coupe ? `<span class="inter" title="Modele emprunte a ${
+      m.coupe.championnats.join("+")} — calibration non mesuree">coupe</span>` : ""
+  }${m.dom} <span class="books">contre</span> ${m.ext}${blocScore(m)}`;
+}
+
+// Une rencontre, quelle que soit la vue : en vue d'une seule ligue, les cartes
+// ne portent pas leur code de ligue, c'est celui de l'etat.
+const cleMatch = (m) => `${m.ligue || (ETAT && ETAT.championnat) || ""}|${m.dom}|${m.ext}`;
+
+// La case « choix le plus sur » : un seul pari, celui qui a le plus de chances
+// de passer parmi ceux qu'on peut jouer a un prix reel. Sa probabilite, sa
+// cote, ce qu'il rapporte et ce qu'une perte coute sont affiches ensemble :
+// « sur » sans ces chiffres serait une promesse.
+function blocChoixSur(m) {
+  const c = m.choix_sur;
+  if (c === undefined) return "";
+  if (!c || !c.choix) {
+    return `<div class="choix-sur aucun"><div class="tete">Choix le plus sur</div>
+      Aucun : ${c ? c.explication : "pas de cotes pour ce match"}. Match a eviter.</div>`;
+  }
+  const x = c.choix;
+  const esperance = x.esperance >= 0
+    ? `rapporte en moyenne <b>+${(x.esperance * 100).toFixed(1)} %</b> de la mise`
+    : `coute en moyenne <b>${(x.esperance * 100).toFixed(1)} %</b> de la mise
+       (marge du bookmaker)`;
+  const classe = c.sur ? "" : (x.p_finale >= c.seuil ? " fragile-choix" : " aucun");
+  const garde = !c.sur
+    ? (x.p_finale < c.seuil
+        ? `<div class="mise-en-garde">Rien ne depasse ${pourcent(c.seuil)} sur ce match :
+           c'est le moins risque, pas un pari sur. Mieux vaut s'abstenir.</div>`
+        : `<div class="mise-en-garde">Sous reserve : ${c.reserves.join(" ; ")}.</div>`)
+    : "";
+  const autres = (c.alternatives || []).length
+    ? `<div class="autres">Ensuite : ${c.alternatives.map((a) =>
+        `${a.libelle} ${pourcent(a.p_finale)} @ ${a.cote.toFixed(2)}`).join(" · ")}</div>`
+    : "";
+  return `<div class="choix-sur${classe}">
+    <div class="tete">Choix le plus sur — pas sans risque</div>
+    <div class="pari">${x.libelle} @ ${x.cote.toFixed(2)}</div>
+    <div class="chiffres">Passe <b>${pourcent(x.p_finale)}</b> du temps
+      (modele ${pourcent(x.p_modele)}${x.p_marche !== null
+        ? `, marche ${pourcent(x.p_marche)}` : ", pas de marche"}) —
+      echoue 1 fois sur <b>${Math.round(x.echoue_1_fois_sur)}</b> — ${esperance}.</div>
+    <div class="comment">Comment : ${x.comment}.</div>
+    ${autres}${garde}
+  </div>`;
+}
+
 function carteMatch(m) {
   const d = new Date(m.date);
   const heure = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -1298,20 +1464,18 @@ function carteMatch(m) {
   div.className = "match"
     + (couverture === "juste" ? " cadre-juste"
        : couverture === "rate" ? " cadre-rate" : "");
+  div.dataset.cle = cleMatch(m);
   div.innerHTML = `
     <div class="heure">${heure}</div>
     <div>
-      <div class="equipes">${m.ligue ? `<span class="ligue">${m.ligue}</span>` : ""}${
-        m.inter_divisions ? `<span class="inter" title="Estime par le modele commun aux divisions ${
-          m.inter_divisions.divisions.join("+")} — calibration non mesuree">inter-divisions</span>` : ""
-      }${m.dom} <span class="books">contre</span> ${m.ext}${blocScore(m)}</div>
+      <div class="equipes">${enteteEquipes(m)}</div>
       <div class="secondaire">
         <span>+2.5 buts ${pourcent(m.plus25)}</span>
         <span>BTTS ${pourcent(m.btts)}</span>
         <span>${m.buts.toFixed(2)} buts attendus</span>
         <button type="button" class="declencheur" data-panneau="books"
-                data-libelle="${m.bookmakers} bookmakers"
-                aria-expanded="false">${m.bookmakers} bookmakers ▾</button>
+                data-libelle="${m.bookmakers ? m.bookmakers + " bookmakers" : "sans cotes"}"
+                aria-expanded="false">${m.bookmakers ? m.bookmakers + " bookmakers" : "sans cotes"} ▾</button>
         <button type="button" class="declencheur" data-panneau="stats"
                 data-libelle="stats &amp; pronos"
                 aria-expanded="false">stats &amp; pronos ▾</button>
@@ -1333,6 +1497,7 @@ function carteMatch(m) {
       </div>
       <div class="secondaire"><span>1 domicile</span><span>N nul</span><span>2 exterieur</span></div>
     </div>
+    ${blocChoixSur(m)}
     ${ligneProno(m)}
     ${lignesAnnexes(m)}
     ${ligneAbsences(m)}
@@ -1374,12 +1539,146 @@ function remplirJours(matchs, ecartes) {
   liste.value = jours.includes(garde) ? garde : "";
 }
 
+let STATUT = "";              // filtre de statut choisi ; vide = tous
+
+// Les compteurs portent sur la journee choisie, avant le filtre de statut :
+// « En direct 3 » doit rester lisible une fois « A venir » selectionne.
+function afficherFiltreStatut(matchs) {
+  const barre = $("filtre-statut");
+  const nombres = { "": matchs.length, termine: 0, en_cours: 0, a_venir: 0 };
+  for (const m of matchs) {
+    const cle = m.statut || "a_venir";
+    nombres[cle] = (nombres[cle] || 0) + 1;
+  }
+  barre.hidden = !(nombres.termine || nombres.en_cours);
+  if (barre.hidden || !nombres[STATUT]) STATUT = "";
+  for (const bouton of barre.querySelectorAll("button")) {
+    const cle = bouton.dataset.statut;
+    bouton.querySelector(".n").textContent = nombres[cle];
+    bouton.disabled = cle !== "" && !nombres[cle];
+    bouton.setAttribute("aria-pressed", String(cle === STATUT));
+  }
+  return STATUT ? matchs.filter((m) => (m.statut || "a_venir") === STATUT) : matchs;
+}
+
+let HEURES = 0;               // fenetre de coup d'envoi choisie ; 0 = pas de limite
+
+// Vrai si le match commence entre maintenant et maintenant + `heures`.
+// Un match deja commence n'y est pas : il ne « commence » plus dans 2 h.
+function dansLaFenetre(date, heures) {
+  if (!heures) return true;
+  const ecart = new Date(date).getTime() - Date.now();
+  return ecart >= 0 && ecart <= heures * 3600 * 1000;
+}
+
+function afficherFiltreHeures(matchs) {
+  const barre = $("filtre-heures");
+  barre.hidden = !matchs.length;
+  for (const bouton of barre.querySelectorAll("button")) {
+    const h = Number(bouton.dataset.heures);
+    const n = matchs.filter((m) => dansLaFenetre(m.date, h)).length;
+    bouton.querySelector(".n").textContent = n;
+    bouton.setAttribute("aria-pressed", String(h === HEURES));
+  }
+  return matchs.filter((m) => dansLaFenetre(m.date, HEURES));
+}
+
+// --- Rafraichissement automatique du direct ---------------------------------
+// Toutes les deux minutes, tant qu'un match du jour est en cours ou sur le point
+// de commencer, et seulement quand l'onglet est visible. La route ne lit que le
+// cache des cotes : aucun credit The Odds API. Le serveur, lui, ne relit les
+// scores API-Football que toutes les dix minutes au plus : interroger plus
+// souvent ne servirait qu'a voir passer les coups d'envoi a l'heure.
+// Les cartes sont mises a jour sur place : un panneau ouvert, la position dans
+// la page et le filtre choisi ne bougent pas.
+const INTERVALLE_DIRECT = 2 * 60 * 1000;
+const SUIVI_APRES_COUP_D_ENVOI = 3 * 3600 * 1000;   // score final encore attendu
+let directEnVol = false;
+let dernierDirect = 0;
+
+function liguesASuivre() {
+  if (STATIQUE || !ETAT || !(ETAT.capacites || []).includes("statuts_en_direct")) return [];
+  const aujourdhui = jourDe(new Date().toISOString());
+  const maintenant = Date.now();
+  const ligues = new Set();
+  for (const m of ETAT.matchs) {
+    if (jourDe(m.date) !== aujourdhui) continue;
+    const envoi = new Date(m.date).getTime();
+    const suivre = m.statut === "en_cours"
+      || (m.statut === "a_venir" && envoi <= maintenant + INTERVALLE_DIRECT)
+      || (m.statut === "termine" && !m.resultat
+          && maintenant - envoi < SUIVI_APRES_COUP_D_ENVOI);
+    const ligue = m.ligue || ETAT.championnat;
+    if (suivre && ligue && ligue !== "@jour" && ligue !== "*") ligues.add(ligue);
+  }
+  return [...ligues];
+}
+
+function noterDirect(texte) {
+  const zone = $("maj-direct");
+  if (zone) zone.textContent = texte;
+}
+
+function appliquerStatuts(neufs) {
+  const parCle = new Map(neufs.map((n) => [`${n.ligue}|${n.dom}|${n.ext}`, n]));
+  let statutsChanges = false;
+  for (const m of ETAT.matchs) {
+    const n = parCle.get(cleMatch(m));
+    if (!n) continue;
+    const avant = m.statut;
+    // `ligue` n'est pas recopiee : en vue d'une seule ligue, elle ferait
+    // apparaitre une etiquette de ligue sur la carte.
+    const { statut, direct, resultat, joue, verdicts, annulation } = n;
+    Object.assign(m, { statut, direct, resultat, joue, verdicts, annulation });
+    const carte = document.querySelector(`.match[data-cle="${CSS.escape(cleMatch(m))}"]`);
+    if (avant !== m.statut) statutsChanges = true;
+    if (!carte) continue;
+    if (avant !== m.statut && m.statut === "termine") {
+      // Le match vient de finir : la carte entiere change (cadre, verdicts).
+      carte.replaceWith(carteMatch(m));
+    } else {
+      carte.querySelector(".equipes").innerHTML = enteteEquipes(m);
+    }
+  }
+  if (statutsChanges) {
+    const jour = $("jour").value;
+    const garde = STATUT;
+    afficherFiltreStatut(jour ? ETAT.matchs.filter((m) => jourDe(m.date) === jour)
+                              : ETAT.matchs);
+    if (STATUT !== garde) filtrer();       // le statut choisi n'a plus de match
+  }
+}
+
+async function rafraichirDirect() {
+  if (directEnVol || document.hidden) return;
+  const ligues = liguesASuivre();
+  if (!ligues.length) { noterDirect(""); return; }
+  const etat = ETAT;
+  directEnVol = true;
+  try {
+    const reponse = await fetch(`/api/statuts?ligues=${ligues.join(",")}`);
+    const charge = await reponse.json();
+    if (!reponse.ok) throw new Error(charge.erreur || "erreur du serveur");
+    if (etat !== ETAT) return;              // une autre vue a ete chargee entre-temps
+    appliquerStatuts(charge.matchs);
+    dernierDirect = Date.now();
+    const heure = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    noterDirect(`direct mis a jour a ${heure} — automatique toutes les 2 min`);
+  } catch (souci) {
+    noterDirect(`direct non mis a jour (${souci.message}) — nouvel essai dans 2 min`);
+  } finally {
+    directEnVol = false;
+  }
+}
+
 function filtrer() {
   if (!ETAT) return;
   const jour = $("jour").value;
-  const matchs = jour ? ETAT.matchs.filter((m) => jourDe(m.date) === jour) : ETAT.matchs;
-  const lignes = jour
-    ? ETAT.opportunites.filter((o) => jourDe(o.date) === jour) : ETAT.opportunites;
+  const duJour = jour ? ETAT.matchs.filter((m) => jourDe(m.date) === jour) : ETAT.matchs;
+  const matchs = afficherFiltreHeures(afficherFiltreStatut(duJour));
+  const lignes = (jour
+    ? ETAT.opportunites.filter((o) => jourDe(o.date) === jour) : ETAT.opportunites)
+    .filter((o) => dansLaFenetre(o.date, HEURES));
   const ecartes = jour
     ? (ETAT.ecartes || []).filter((e) => jourDe(e.date) === jour) : ETAT.ecartes;
   afficherEcartes(ecartes);
@@ -1397,6 +1696,11 @@ function afficherMatchs(matchs, ecartes) {
   $("compte-matchs").textContent = matchs.length ? `— ${matchs.length}` : "";
   if (!matchs.length) {
     $("titre-matchs").textContent = "Matchs a venir";
+    if (HEURES) {
+      hote.innerHTML = `<div class="vide">Aucun match ne commence dans les
+        ${HEURES} prochaines heures. Choisis une fenetre plus large ou « Tout ».</div>`;
+      return;
+    }
     if (ecartes && ecartes.length) {
       // Le cas d'Arsenal - Coventry City : la rencontre existe, le modele ne
       // peut pas l'estimer. Se taire laisserait croire qu'il n'y a pas match.
@@ -1420,7 +1724,10 @@ function afficherMatchs(matchs, ecartes) {
   // « Matchs a venir » devient faux des qu'on choisit une journee passee.
   const joues = matchs.filter((m) => m.joue).length;
   $("titre-matchs").textContent =
-    joues === 0 ? "Matchs a venir"
+    HEURES ? `Matchs dans les ${HEURES} prochaines heures`
+    : STATUT === "en_cours" ? "Matchs en direct"
+    : STATUT === "termine" ? "Matchs termines"
+    : joues === 0 ? "Matchs a venir"
     : joues === matchs.length ? "Matchs joues"
     : "Matchs";
   let jourCourant = null;
@@ -1443,7 +1750,7 @@ function afficherRapportLigues(ligues) {
   if (bloc.hidden) return;
   const ok = ligues.filter((l) => !l.erreur);
   const rates = ligues.filter((l) => l.erreur);
-  const sansCotes = LIGUES.filter((l) => l.age_cotes_minutes === null).length;
+  const sansCotes = LIGUES.filter((l) => l.age_cotes_minutes === null && !l.sans_cotes).length;
   bloc.innerHTML = `${ok.length} ligue(s) lue(s) : `
     + ok.map((l) => `${l.code} (${l.matchs})`).join(", ")
     + (rates.length ? `. Echec sur ${rates.map((l) => l.code + " : " + l.erreur).join(" ; ")}` : "")
@@ -1691,11 +1998,13 @@ function afficher(etat) {
        : (etat.age_cotes_minutes === null ? " — aucune cote en cache"
           : " — cotes datees de " + ageLisible(etat.age_cotes_minutes)));
   ETAT = etat;
+  dernierDirect = Date.now();
   remplirJours(etat.matchs, etat.ecartes);
   $("jour").disabled = Boolean(etat.jour);
   afficherRapportLigues(etat.ligues);
   afficherCombinesAujourdhui(etat.jour || null);
   filtrer();
+  noterDirect(liguesASuivre().length ? "direct actualise automatiquement toutes les 2 min" : "");
   $("section-matchs").hidden = false;
   $("quota").textContent = etat.quota;
   $("avertissement").textContent = etat.avertissement;
@@ -1729,14 +2038,16 @@ async function demanderLeJour(forcer) {
 }
 
 async function demanderToutesLesLigues(forcer) {
-  const avecCotes = LIGUES.filter((l) => l.age_cotes_minutes !== null);
+  // Les ligues sans cotes (calendrier ESPN) se lisent toujours : rien a payer.
+  const avecCotes = LIGUES.filter((l) => l.age_cotes_minutes !== null || l.sans_cotes);
   const cibles = forcer ? LIGUES : avecCotes;
+  const payantes = cibles.filter((l) => !l.sans_cotes).length;
   if (!cibles.length) {
     throw new Error("Aucune ligue n'a de cotes en cache. Choisis une ligue et "
       + "clique sur « Rafraichir les cotes », ou rafraichis toutes les ligues.");
   }
   if (forcer && !confirm(
-      `Rafraichir ${cibles.length} ligues coutera ${cibles.length * 2} credits `
+      `Rafraichir ${cibles.length} ligues coutera ${payantes * 2} credits `
       + `The Odds API. Continuer ?`)) {
     throw new Error("Rafraichissement annule.");
   }
@@ -2087,12 +2398,13 @@ async function afficherApis() {
   for (const s of services) {
     const tr = document.createElement("tr");
     const reste = s.limite ? (s.restant || 0) / s.limite : 0;
-    const jauge = s.utilise_par_l_outil
+    const jauge = s.utilise_par_l_outil && s.restant !== null && s.restant !== undefined
       ? `<span class="jauge ${reste < 0.2 ? "tendue" : ""}"><span
            style="width:${Math.min(100, reste * 100)}%"></span></span>${s.restant}`
       : "—";
     const etat = !s.cle_configuree
       ? `absente du .env (${s.variable})`
+      : s.usage ? s.usage
       : (s.utilise_par_l_outil
           ? `${s.appels} appel(s), ${s.cout_par_appel} credit(s) chacun`
             + (s.fenetre ? ` — couvre ${s.fenetre.join(" et ")}` : "")
@@ -2101,7 +2413,7 @@ async function afficherApis() {
       <td>${s.libelle}</td>
       <td>${s.cle_configuree ? "configuree" : "<strong>absente</strong>"}</td>
       <td class="nombre">${s.limite} / ${s.periode}</td>
-      <td class="nombre">${s.utilise_par_l_outil ? s.consomme : "—"}</td>
+      <td class="nombre">${s.utilise_par_l_outil && s.consomme !== null ? s.consomme : "—"}</td>
       <td class="nombre">${jauge}</td>
       <td class="motif ${s.utilise_par_l_outil ? "" : "inutilisee"}">${etat}</td>`;
     corps.appendChild(tr);
@@ -2124,6 +2436,32 @@ function carteFavori(j, index) {
       ${j.perd_une_fois_sur ? `<div class="bas"><span>perd environ 1 fois sur
         ${j.perd_une_fois_sur.toFixed(1)}</span></div>` : ""}
     </div>`;
+}
+
+function grilleFavoris(liste, vide) {
+  return liste.length
+    ? `<div class="jambes-grille">${liste.map((j, i) => carteFavori(j, i)).join("")}</div>`
+    : `<div class="note">${vide}</div>`;
+}
+
+// Les deux listes a plus de 50 %. Elles ne relevent pas de la regle mesuree
+// (70 %) : la note le dit avant les cartes, pas apres.
+function blocListesElargies(f) {
+  if (!f.vainqueurs || !f.buts) return "";     // serveur demarre avant cette version
+  const seuil = pourcent(f.seuil_elargi);
+  return `
+      <h3>Equipes qui gagnent a plus de ${seuil} <span class="compte">— ${f.vainqueurs.length}</span></h3>
+      <div class="note">Le marche voit la victoire de cette equipe plus probable
+        que le nul et la defaite reunis. A 55 %, elle ne gagne pas
+        <strong>presque une fois sur deux</strong>. Aucun rendement n'est mesure
+        sous ${pourcent(f.seuil)}.</div>
+      ${grilleFavoris(f.vainqueurs, `Aucune equipe a plus de ${seuil} ce jour-la.`)}
+      <h3>Plus / moins de 2.5 buts a plus de ${seuil} <span class="compte">— ${f.buts.length}</span></h3>
+      <div class="note">Pour chaque match, le cote du plus/moins 2.5 buts que le
+        marche juge le plus probable. Probabilites de-viggees, sans rendement
+        mesure.</div>
+      ${grilleFavoris(f.buts, `Aucune cote plus/moins 2.5 suffisante ce jour-la
+        (il faut au moins trois bookmakers).`)}`;
 }
 
 async function afficherEquipesFortes() {
@@ -2156,8 +2494,9 @@ async function afficherEquipesFortes() {
       <h3>Combines prets</h3>
       ${htmlCombinesPrets(f.combines)}
       <h3>Tous les favoris a plus de ${pourcent(f.seuil)}</h3>
-      <div class="jambes-grille">${f.fortes.map((j, i) => carteFavori(j, i)).join("")}</div>
-      ${noteFavoris(f)}`;
+      ${grilleFavoris(f.fortes, `Aucun favori a plus de ${pourcent(f.seuil)} ce jour-la.`)}
+      ${noteFavoris(f)}
+      ${blocListesElargies(f)}`;
   } catch (souci) {
     if (jeton !== jetonFortes) return;
     bloc.classList.remove("squelette");
@@ -2250,7 +2589,8 @@ async function demarrer() {
     const option = document.createElement("option");
     option.value = c.code;
     option.textContent = `${c.nom} (${c.code})`
-      + (c.age_cotes_minutes === null ? " — pas de cotes" : "");
+      + (c.sans_cotes ? " — sans cotes, modele seul"
+         : c.age_cotes_minutes === null ? " — pas de cotes" : "");
     groupes.get(pays).appendChild(option);
   }
   const memoire = JSON.parse(localStorage.getItem("foot_edge") || "{}");
@@ -2288,6 +2628,22 @@ async function demarrer() {
     navigation.classList.toggle("detachee", window.scrollY > 4);
   }, { passive: true });
   $("jour").addEventListener("change", filtrer);
+  if (!STATIQUE) {
+    setInterval(rafraichirDirect, INTERVALLE_DIRECT);
+    // Onglet masque : rien n'est demande. A son retour, on rattrape tout de
+    // suite plutot que d'attendre le prochain tic.
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && Date.now() - dernierDirect >= INTERVALLE_DIRECT) {
+        rafraichirDirect();
+      }
+    });
+  }
+  for (const bouton of $("filtre-statut").querySelectorAll("button")) {
+    bouton.addEventListener("click", () => { STATUT = bouton.dataset.statut; filtrer(); });
+  }
+  for (const bouton of $("filtre-heures").querySelectorAll("button")) {
+    bouton.addEventListener("click", () => { HEURES = Number(bouton.dataset.heures); filtrer(); });
+  }
   // Changer de jour depuis l'onglet ouvert : la liste doit suivre.
   $("jour").addEventListener("change", () => {
     if (document.querySelector('.vue.active')?.dataset.vue === "fortes") afficherEquipesFortes();

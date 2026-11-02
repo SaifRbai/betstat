@@ -40,11 +40,13 @@ import config
 from cli import charger_donnees, entrainer_modele
 from data import absences as absences_module
 from data import cotes as cotes_module
+from data import espn as espn_module
 from data import noms as noms_module
 from data import resultats as resultats_module
 from data import scores as scores_module
 from modele import annexes
 from modele import calibration
+from modele import europe as europe_module
 from modele import inter_divisions as inter_module
 from paris import combine as combine_module
 from paris import confiance as confiance_module
@@ -109,6 +111,54 @@ def _cotes_a_venir(cotes: pd.DataFrame, jour: date | None = None) -> pd.DataFram
     return cotes.loc[dates.notna() & (jours >= debut)].copy()
 
 
+def _bornes_du_jour(jour: str) -> tuple[str, str]:
+    """[minuit, minuit suivant) d'une journee locale, en instants UTC ISO."""
+    debut = pd.Timestamp(jour).tz_localize(_FUSEAU_LOCAL)
+    return (debut.tz_convert(timezone.utc).isoformat(),
+            (debut + pd.Timedelta(days=1)).tz_convert(timezone.utc).isoformat())
+
+
+def _avec_matchs_commences(championnat: str, cotes: pd.DataFrame,
+                           jour: str) -> pd.DataFrame:
+    """Le cache, complete des matchs du jour qu'il ne contient plus.
+
+    Des le coup d'envoi, un match sort du flux de l'API au rafraichissement
+    suivant. Sans l'historique, la vue du jour perdrait ses matchs en cours et
+    termines : on les reprend avec les dernieres cotes vues avant le coup
+    d'envoi.
+    """
+    try:
+        anciens = cotes_module.derniers_instantanes(championnat, *_bornes_du_jour(jour))
+    except Exception as erreur:                       # jamais au prix de la page
+        _journal.info("Historique des cotes %s illisible : %s", championnat, erreur)
+        return cotes
+    if anciens.empty:
+        return cotes
+    connus = set(zip(cotes["dom"], cotes["ext"])) if not cotes.empty else set()
+    manquants = anciens[[(d, e) not in connus
+                         for d, e in zip(anciens["dom"], anciens["ext"])]]
+    if manquants.empty:
+        return cotes
+    if cotes.empty:
+        return manquants.reset_index(drop=True)
+    return pd.concat([cotes, manquants], ignore_index=True)
+
+
+# Au-dela, un match commence sans score connu est tenu pour termine : 90
+# minutes, la mi-temps et les arrets de jeu tiennent largement en deux heures.
+DUREE_MATCH = pd.Timedelta(hours=2)
+
+
+def _calendrier_sans_cotes(championnat: str, jour: str | None = None) -> pd.DataFrame:
+    """Programme ESPN d'une ligue sans cotes, a partir de minuit local.
+
+    Les matchs deja commences de la journee restent : comme pour les ligues
+    cotees, la vue du jour montre aussi ce qui se joue et ce qui s'est joue.
+    """
+    debut = pd.Timestamp(jour or aujourdhui()).tz_localize(_FUSEAU_LOCAL)
+    return espn_module.calendrier(championnat, debut.tz_convert(timezone.utc).to_pydatetime())
+
+
 # --------------------------------------------------------------------------
 # Cache des modeles
 # --------------------------------------------------------------------------
@@ -125,8 +175,11 @@ class Cache:
         self._modeles: dict[str, tuple[Any, Any]] = {}
         self._annexes: dict[str, dict[str, Any]] = {}
         self._inter: dict[str, tuple[Any, Any, Any] | None] = {}
+        self._coupes: dict[str, dict] = {}
 
     def modele(self, championnat: str) -> tuple[Any, Any]:
+        if config.est_coupe(championnat):
+            return self._modele_de_coupe(championnat)
         with self._verrou:
             if championnat not in self._modeles:
                 matchs, _ = charger_donnees(championnat, SAISONS, SOURCE)
@@ -145,12 +198,62 @@ class Cache:
                 self._annexes[championnat] = _entrainer_annexes(matchs, championnat)
             return self._modeles[championnat]
 
+    def _modele_de_coupe(self, coupe: str) -> tuple[Any, Any]:
+        """Le modele d'emprunt d'une coupe (voir config.COUPES).
+
+        Hors du verrou : une coupe nationale emprunte `inter_divisions` ou
+        `modele`, qui le prennent eux-memes, et le verrou n'est pas reentrant.
+        """
+        coupe = coupe.upper()
+        if coupe in self._modeles:
+            return self._modeles[coupe]
+        info = config.COUPES[coupe]
+        if info["type"] == "europe":
+            with self._verrou:
+                if "@europe" not in self._modeles:
+                    matchs, modele, rapport = europe_module.entrainer(SAISONS)
+                    self._modeles["@europe"] = (matchs, modele)
+                    self._coupes["@europe"] = {
+                        "type": "europe", "championnats": list(rapport.championnats),
+                        "matchs": rapport.nb_matchs, "equipes": rapport.nb_equipes,
+                        "matchs_europeens": rapport.matchs_europeens,
+                        "ecartes": sorted(rapport.ecartes)}
+            resultat, description = self._modeles["@europe"], self._coupes["@europe"]
+        else:
+            rattachement = str(info["rattachement"])
+            secours = self.inter_divisions(rattachement)
+            if secours is not None:
+                matchs, modele, rapport = secours
+                resultat = (matchs, modele)
+                description = {"type": "nationale", "championnats": list(rapport.divisions),
+                               "matchs": rapport.nb_matchs, "equipes": rapport.nb_equipes}
+            else:
+                resultat = self.modele(rattachement)
+                description = {"type": "nationale", "championnats": [rattachement],
+                               "matchs": len(resultat[0]),
+                               "equipes": len(resultat[1].equipes)}
+        with self._verrou:
+            self._modeles[coupe] = resultat
+            self._coupes[coupe] = description
+        return resultat
+
+    def coupe(self, coupe: str) -> dict | None:
+        """Sur quels championnats repose le modele de cette coupe, ou None."""
+        if not config.est_coupe(coupe):
+            return None
+        self.modele(coupe)
+        return self._coupes.get(coupe.upper())
+
     def annexes(self, championnat: str) -> dict[str, Any]:
         """Modeles corners et cartons, entraines avec le modele principal.
 
         Renvoie un dictionnaire eventuellement vide : un championnat sans
         colonnes de corners ou de cartons doit afficher moins, pas echouer.
+        Toujours vide pour une coupe : ses modeles d'emprunt melangent des
+        championnats dont les corners et cartons n'ont pas la meme echelle.
         """
+        if config.est_coupe(championnat):
+            return {}
         self.modele(championnat)
         return self._annexes.get(championnat, {})
 
@@ -183,10 +286,12 @@ class Cache:
                 self._modeles.pop(championnat, None)
                 self._annexes.pop(championnat, None)
                 self._inter.pop(championnat, None)
+                self._coupes.pop(championnat, None)
             else:
                 self._modeles.clear()
                 self._annexes.clear()
                 self._inter.clear()
+                self._coupes.clear()
 
 
 def _entrainer_annexes(matchs, championnat: str) -> dict:
@@ -278,10 +383,17 @@ class _Resultats:
     def __init__(self) -> None:
         self._par_ligue: dict[str, dict[tuple[str, str], dict]] = {}
         self._par_jour: dict[tuple, dict[tuple[str, str], dict]] = {}
+        self._en_direct: dict[tuple, dict[tuple[str, str], dict]] = {}
+        self._annules: dict[tuple, dict[tuple[str, str], dict]] = {}
 
     def _ligue(self, championnat: str) -> dict[tuple[str, str], dict]:
         if championnat not in self._par_ligue:
             index: dict[tuple[str, str], dict] = {}
+            if config.est_coupe(championnat):
+                # Aucune coupe n'est publiee par football-data.co.uk : ses
+                # scores viennent d'API-Football seulement (`_du_jour`).
+                self._par_ligue[championnat] = index
+                return index
             try:
                 matchs = resultats_module.charger(championnat, 1)
             except Exception as erreur:               # jamais au prix de la page
@@ -308,6 +420,22 @@ class _Resultats:
             self._par_jour[cle] = scores_module.du_jour(jour, equipes)
         return self._par_jour[cle]
 
+    def direct(self, jour: str, dom: str, ext: str,
+               equipes: list[str]) -> dict | None:
+        """Score et minute d'une rencontre en cours, ou None."""
+        cle = (jour, id(equipes))
+        if cle not in self._en_direct:
+            self._en_direct[cle] = scores_module.en_direct(jour, equipes)
+        return self._en_direct[cle].get((dom, ext))
+
+    def annule(self, jour: str, dom: str, ext: str,
+               equipes: list[str]) -> dict | None:
+        """La rencontre reportee, annulee ou arretee, ou None."""
+        cle = (jour, id(equipes))
+        if cle not in self._annules:
+            self._annules[cle] = scores_module.annules(jour, equipes)
+        return self._annules[cle].get((dom, ext))
+
     def du_match(self, championnat: str, dom: str, ext: str,
                  equipes: list[str] | None = None,
                  jour: str | None = None) -> dict | None:
@@ -326,6 +454,11 @@ class _Resultats:
         plus qu'une fois par phase, l'ambiguite est negligeable.
         """
         publie = self._ligue(championnat).get((dom, ext))
+        if publie is not None and jour and not _meme_journee(publie["date"], jour):
+            # Dans les ligues ou l'on se rencontre trois ou quatre fois par
+            # saison, la meme affiche a deja ete jouee : ce score est celui
+            # d'un autre match.
+            publie = None
         if publie is not None:
             return {**publie, "source": "football_data"}
         if jour and equipes:
@@ -338,6 +471,50 @@ class _Resultats:
             # plus. Douze rencontres par jour sur un quota de cent.
             return scores_module.comptes(entree, dom, ext)
         return None
+
+
+def _etat_espn(carte: dict, ligne: Any, ecoule: pd.Timedelta) -> None:
+    """Statut et score d'un match commence d'une ligue sans cotes.
+
+    ESPN donne le score de son propre calendrier, en direct puis final : pas
+    besoin d'API-Football, dont les noms d'equipes ne seraient de toute facon
+    pas ceux de l'historique ESPN.
+    """
+    def entier(valeur: Any) -> int | None:
+        return None if valeur is None or pd.isna(valeur) else int(valeur)
+
+    buts_dom, buts_ext = entier(ligne.buts_dom), entier(ligne.buts_ext)
+    carte["joue"] = True
+    carte["annulation"] = None
+    carte["direct"] = None
+    carte["resultat"] = None
+    if ligne.statut == "in" and buts_dom is not None:
+        carte["statut"] = "en_cours"
+        carte["direct"] = {"buts_dom": buts_dom, "buts_ext": buts_ext,
+                           "minute": None, "statut": "en cours"}
+    elif ligne.statut == "post" and buts_dom is not None and buts_ext is not None:
+        carte["statut"] = "termine"
+        resultat = {"buts_dom": buts_dom, "buts_ext": buts_ext}
+        carte["resultat"] = {**resultat, "corners_dom": None, "corners_ext": None,
+                             "jaunes_dom": None, "jaunes_ext": None,
+                             "issue": verdict_module.issue_1n2(resultat),
+                             "source": "espn"}
+        carte["verdicts"] = _verdicts_du_match(carte, resultat)
+    else:
+        carte["statut"] = "en_cours" if ecoule < DUREE_MATCH else "termine"
+
+
+def _meme_journee(date_publiee: str, jour: str) -> bool:
+    """Une date football-data et un jour local designent-ils le meme match ?
+
+    Un jour d'ecart est tolere : la date du coup d'envoi en UTC et celle de
+    football-data peuvent differer d'un fuseau.
+    """
+    try:
+        ecart = abs((pd.Timestamp(date_publiee).date() - date.fromisoformat(jour)).days)
+    except (ValueError, TypeError):
+        return True                                   # date illisible : on ne refuse pas
+    return ecart <= 1
 
 
 def _verdicts_du_match(match: dict, resultat: dict) -> dict:
@@ -483,22 +660,29 @@ def affiches(championnat: str,
     """
     matchs_charges, modele = CACHE.modele(championnat)
     modeles_annexes = CACHE.annexes(championnat)
+    coupe = CACHE.coupe(championnat)
     comptes = resultats_module.nb_matchs_par_equipe(matchs_charges)
     cotes, age = cotes_module.lire_cache(championnat)
     cotes = _cotes_a_venir(cotes)
+    if jour is not None:
+        cotes = _avec_matchs_commences(championnat, cotes, jour)
     marche_devigge = _probabilites_de_marche(cotes)
     poids_modele = calibration.poids_melange(championnat)
     absences_cache = _Absences()
     resultats_cache = _Resultats()
     maintenant = datetime.now(timezone.utc)
     lignes, ecartes = [], []
-    for ligne in cotes_module.matchs_a_venir(cotes).itertuples():
+    # Une ligue sans cotes tire son programme d'ESPN : sans lui, aucun match.
+    sans_cotes = config.sans_cotes(championnat)
+    a_venir = (_calendrier_sans_cotes(championnat, jour) if sans_cotes
+               else cotes_module.matchs_a_venir(cotes))
+    for ligne in a_venir.itertuples():
         if jour is not None and _jour_local(ligne.date) != jour:
             continue
         dom = noms_module.resoudre_vers(ligne.dom, modele.equipes)
         ext = noms_module.resoudre_vers(ligne.ext, modele.equipes)
         modele_du_match, comptes_du_match, inter = modele, comptes, None
-        if dom is None or ext is None:
+        if (dom is None or ext is None) and coupe is None:
             # Un adversaire d'une autre division — un match de coupe. Le modele
             # du pays le connait peut-etre ; il n'est entraine que maintenant.
             secours = CACHE.inter_divisions(championnat)
@@ -531,12 +715,25 @@ def affiches(championnat: str,
                     for e in peu_de_donnees]
         absences = absences_cache.du_match(ligne.date, dom, ext, modele_du_match.equipes)
         reserves += _reserves_absences(absences, dom, ext)
+        if sans_cotes:
+            reserves.append(
+                "aucun bookmaker ne cote ce championnat : probabilites du modele "
+                "seul, sans comparaison au marche, et leur calibration n'a pas "
+                "pu etre verifiee contre des cotes")
         if inter is not None:
             reserves.append(
                 f"estimation inter-divisions ({'+'.join(inter['divisions'])}) : "
                 "ni la calibration ni le ROI mesures sur ce championnat ne "
                 "s'appliquent a ce match — ils n'ont ete etablis que sur des "
                 "rencontres d'une seule division")
+        if coupe is not None:
+            reserves.append(
+                f"match de coupe estime par un modele de championnats "
+                f"({'+'.join(coupe['championnats'])}) : ni calibration ni ROI n'ont "
+                "ete mesures sur des matchs de coupe"
+                + (", et le niveau relatif des championnats ne repose que sur "
+                   f"{coupe['matchs_europeens']} matchs de Ligue des champions"
+                   if coupe["type"] == "europe" else ""))
         p_marche = marche_devigge.get((ligne.dom, ligne.ext), {})
         meilleures = cotes_module.meilleures_cotes(detail)
         pronos = confiance_module.lister(p, dom, ext, p_marche, reserves)
@@ -547,9 +744,12 @@ def affiches(championnat: str,
             "meilleures_cotes": meilleures,
             "prono_1n2": confiance_module.prono_1n2(
                 p, dom, ext, p_marche, meilleures, reserves, poids_modele),
+            "choix_sur": confiance_module.choix_le_plus_sur(
+                p, dom, ext, p_marche, meilleures, reserves, poids_modele),
             "pronos_annexes": [] if inter is not None else _pronos_annexes(
                 modeles_annexes, dom, ext, reserves, championnat),
             "inter_divisions": inter,
+            "coupe": coupe,
             "absences": absences,
             "1": p["1N2"]["1"], "N": p["1N2"]["N"], "2": p["1N2"]["2"],
             "plus25": p["totaux"]["plus_2.5"], "btts": p["btts"]["oui"],
@@ -564,14 +764,41 @@ def affiches(championnat: str,
         coup_envoi = pd.Timestamp(ligne.date)
         if coup_envoi.tzinfo is None:
             coup_envoi = coup_envoi.tz_localize(timezone.utc)
+        lignes[-1]["statut"] = "a_venir"
         if coup_envoi < maintenant:
+            # La date UTC, pas la date locale : c'est celle sous laquelle
+            # API-Football range la rencontre. Un coup d'envoi a minuit heure
+            # de Paris y est encore la veille.
+            jour_match = str(coup_envoi.tz_convert(timezone.utc).date())
+            if sans_cotes:
+                _etat_espn(lignes[-1], ligne, maintenant - coup_envoi)
+                continue
+            # Le direct d'abord : il relit les scores API-Football toutes les
+            # dix minutes, et un match qui vient de finir y apparait alors
+            # aussi pour la lecture des scores finaux qui suit.
+            direct = (resultats_cache.direct(jour_match, dom, ext, modele_du_match.equipes)
+                      if maintenant - coup_envoi < DUREE_MATCH + pd.Timedelta(hours=1)
+                      else None)
             # `modele_du_match.equipes` et non celles du championnat : sur un
             # match de coupe, c'est le modele inter-divisions qui a resolu les
             # noms, et la cle doit etre la meme des deux cotes.
-            resultat = resultats_cache.du_match(
-                championnat, dom, ext, modele_du_match.equipes,
-                _jour_local(ligne.date))
+            resultat = None if direct else resultats_cache.du_match(
+                championnat, dom, ext, modele_du_match.equipes, jour_match)
             lignes[-1]["joue"] = True
+            lignes[-1]["direct"] = None if direct is None else {
+                cle: direct.get(cle) for cle in ("buts_dom", "buts_ext", "minute", "statut")}
+            # Sans score ni direct, c'est l'heure qui tranche : un match commence
+            # il y a moins de deux heures est sans doute encore en cours —
+            # sauf si API-Football le dit reporte, annule ou arrete.
+            annule = (None if direct is not None or resultat is not None
+                      else resultats_cache.annule(jour_match, dom, ext,
+                                                  modele_du_match.equipes))
+            lignes[-1]["annulation"] = None if annule is None else annule["statut"]
+            lignes[-1]["statut"] = (
+                "en_cours" if direct is not None
+                else "annule" if annule is not None
+                else "en_cours" if resultat is None and maintenant - coup_envoi < DUREE_MATCH
+                else "termine")
             if resultat is None:
                 # Le TTL de six heures de football-data peut retarder la
                 # publication : dire « pas encore » vaut mieux que se taire.
@@ -593,6 +820,12 @@ def opportunites(championnat: str, bankroll: float, forcer: bool = False,
                  jour: str | None = None) -> tuple[list[dict], float | None]:
     """Selections ou le marche semble decale. `forcer` consomme des credits."""
     _, modele = CACHE.modele(championnat)
+    if config.sans_cotes(championnat):
+        # Pas de prix, pas de valeur a chercher. Rafraichir ne coute rien ici :
+        # c'est le calendrier ESPN qu'on relit, sans credit The Odds API.
+        if forcer:
+            espn_module.evenements(championnat, datetime.now(timezone.utc).year, ttl=0)
+        return [], None
     if forcer:
         cotes, age = cotes_module.recuperer(championnat, forcer=True), 0.0
     else:
@@ -641,7 +874,8 @@ def _performance_mesuree(championnat: str) -> dict | None:
 # au demarrage. Une page recente devant un serveur ancien affiche donc des
 # libelles neufs sur des donnees qui n'existent pas. Ce drapeau permet de le
 # dire au lieu de laisser croire a une absence de donnee.
-CAPACITES = ("resultats_football_data", "resultats_api_football", "verdicts")
+CAPACITES = ("resultats_football_data", "resultats_api_football", "verdicts",
+             "statut_des_matchs", "statuts_en_direct")
 
 
 def etat_du_jour(championnat: str, bankroll: float, forcer: bool = False) -> dict:
@@ -673,19 +907,54 @@ def etat_du_jour(championnat: str, bankroll: float, forcer: bool = False) -> dic
     }
 
 
-def ligues_du_jour(jour: str) -> list[str]:
-    """Les championnats dont le cache contient au moins un match ce jour-la.
+# Champs d'une carte de match qui changent pendant qu'elle est jouee. Le reste
+# (probabilites, cotes, pronos) est fige au coup d'envoi.
+CHAMPS_EN_DIRECT = ("date", "dom", "ext", "statut", "direct", "resultat",
+                    "joue", "verdicts", "annulation")
 
-    Ne lit que le cache disque : aucun modele n'est entraine ici. C'est ce qui
+
+def statuts_du_jour(codes: list[str]) -> dict:
+    """Statut, score en direct et resultat des matchs du jour de ces ligues.
+
+    Sert au rafraichissement automatique de la page. Aucun credit The Odds API :
+    seul le cache des cotes est lu. Les scores API-Football, eux, ne sont relus
+    qu'une fois toutes les dix minutes au plus, quel que soit le nombre de pages
+    ouvertes qui interrogent cette route.
+    """
+    jour = aujourdhui()
+    matchs: list[dict] = []
+    for code in codes:
+        try:
+            lignes, _, _ = affiches(code, jour=jour)
+        except Exception as erreur:                   # une ligue muette, pas la page
+            _journal.info("Statuts %s indisponibles : %s", code, erreur)
+            continue
+        matchs += [{"ligue": code} | {cle: m.get(cle) for cle in CHAMPS_EN_DIRECT}
+                   for m in lignes]
+    return {"jour": jour, "matchs": matchs,
+            "genere": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")}
+
+
+def ligues_du_jour(jour: str) -> list[str]:
+    """Les championnats qui ont au moins un match ce jour-la.
+
+    Le cache des cotes, complete de l'historique pour les matchs deja
+    commences. Ne lit que le disque : aucun modele n'est entraine ici. C'est ce qui
     rend la vue du jour tenable. Un entrainement coute quelques secondes, et un
     jour de semaine la moitie des ligues ne joue pas — les charger toutes pour
     n'en afficher que huit matchs serait payer dix-sept fois un calcul inutile.
     """
     codes = []
-    for code in config.CHAMPIONNATS_AVEC_COTES:
+    for code in config.COMPETITIONS_AVEC_COTES:
         cotes, _ = cotes_module.lire_cache(code)
         cotes = _cotes_a_venir(cotes)
         if not cotes.empty and (cotes["date"].map(_jour_local) == jour).any():
+            codes.append(code)
+        elif not _avec_matchs_commences(code, cotes.iloc[0:0], jour).empty:
+            codes.append(code)                        # tous deja commences
+    for code in config.CHAMPIONNATS_SANS_COTES:
+        calendrier = _calendrier_sans_cotes(code, jour)
+        if not calendrier.empty and (calendrier["date"].map(_jour_local) == jour).any():
             codes.append(code)
     return codes
 
@@ -781,7 +1050,7 @@ class ModeleParLigue:
         self._ligue: dict[tuple[str, str], str] = {}
         for jambe in jambes:
             ligue = (jambe.get("ligue") or defaut).upper()
-            if ligue not in config.CHAMPIONNATS:
+            if ligue not in config.COMPETITIONS:
                 raise ValueError(f"Championnat inconnu dans le combine : {ligue}")
             self._ligue[(jambe["dom"], jambe["ext"])] = ligue
             if ligue not in self._modeles:
@@ -826,12 +1095,10 @@ def evaluer_combine(championnat: str, bankroll: float, jambes: list[dict]) -> di
 def etat_des_apis() -> list[dict]:
     """Les trois services, avec leur consommation reelle.
 
-    Deux services sont reellement interroges et ont donc un compteur : The Odds
-    API pour les cotes, API-Football pour les absences. football-data.org n'en a
-    pas, et c'est mesure plutot que suppose : sur son plan gratuit les arbitres
-    ne sont jamais renseignes, les cotes sont derriere un paquet payant, et son
-    classement est deja couvert, en plus riche, par les CSV football-data.co.uk.
-    Lui inventer un compteur laisserait croire a un usage qui n'existe pas.
+    Deux services ont un compteur : The Odds API pour les cotes, API-Football
+    pour les absences et les scores. football-data.org n'en a pas : il ne sert
+    qu'aux resultats de Ligue des champions du modele des coupes d'Europe, un
+    appel par saison toutes les six heures au plus, loin de son quota.
     """
     compteur = cotes_module.lire_compteur()
     consomme = cotes_module.credits_consommes(compteur)
@@ -851,6 +1118,9 @@ def etat_des_apis() -> list[dict]:
                 annonce_par_l_api=compteur_absences.get("restant_api"),
                 cout_par_appel=1,
                 fenetre=absences_module.jours_couverts())
+        elif service["nom"] == "football_data_org":
+            ligne.update(usage="resultats de Ligue des champions (modele des coupes "
+                               "d'Europe), un appel par saison toutes les 6 h au plus")
         elif service["nom"] == "odds":
             ligne.update(
                 consomme=consomme,
@@ -972,7 +1242,7 @@ def combine_du_jour(cible: float = 9.0, mise: float = 10.0,
     l'utilisateur parie reellement.
     """
     par_championnat = {}
-    for code in config.CHAMPIONNATS_AVEC_COTES:
+    for code in config.COMPETITIONS_AVEC_COTES:
         cotes, age = cotes_module.lire_cache(code)
         if not cotes.empty and age is not None:
             par_championnat[code] = cotes
@@ -1069,6 +1339,44 @@ def _jambe(s: quotidien_module.Selection) -> dict:
             "date": pd.Timestamp(s.date).isoformat()}
 
 
+# Les deux listes complementaires de l'onglet « Equipes fortes ». Un seuil de
+# 50 % ne dit qu'une chose : le marche voit cette issue plus probable que son
+# contraire. Ce n'est PAS la regle mesuree (70 %), et la page le dit.
+SEUIL_LISTES_ELARGIES = 0.50
+
+
+def _a_venir_du_jour(selections: list, jour: str | None) -> list:
+    """Les selections dont le coup d'envoi n'est pas passe, du jour demande."""
+    maintenant = pd.Timestamp.now(tz="UTC")
+    retenues = [s for s in selections if _coup_d_envoi(s.date) > maintenant]
+    if jour is not None:
+        retenues = [s for s in retenues if _jour_local(s.date) == jour]
+    return sorted(retenues, key=lambda s: s.p_marche, reverse=True)
+
+
+def _avec_defaite(s: quotidien_module.Selection) -> dict:
+    return _jambe(s) | {"perd_une_fois_sur": 1.0 / max(1e-9, 1.0 - s.p_marche)}
+
+
+def listes_elargies(par_championnat: dict, jour: str | None) -> dict:
+    """Vainqueurs a plus de 50 %, et le cote le plus probable du plus/moins 2.5.
+
+    Probabilites du marche de-vigge, comme le reste de l'onglet : le modele ne
+    fait pas mieux que lui (voir `paris/quotidien.py`).
+    """
+    vainqueurs, buts = [], []
+    for code, cotes in par_championnat.items():
+        vainqueurs += [s for s in quotidien_module.candidats(
+                           cotes, code, seuil=SEUIL_LISTES_ELARGIES, prime_minimale=0.0)
+                       if s.selection in ("1", "2")]          # le nul n'est pas une equipe
+        buts += [s for s in quotidien_module.candidats_multi(
+                     cotes, code, seuil=SEUIL_LISTES_ELARGIES)
+                 if s.selection.startswith("plus_moins_2.5:")]
+    return {"seuil_elargi": SEUIL_LISTES_ELARGIES,
+            "vainqueurs": [_avec_defaite(s) for s in _a_venir_du_jour(vainqueurs, jour)],
+            "buts": [_avec_defaite(s) for s in _a_venir_du_jour(buts, jour)]}
+
+
 def equipes_fortes(jour: str | None = None, mise: float = 10.0) -> dict:
     """Les grands favoris du marche et trois combines prets, pour une journee.
 
@@ -1078,7 +1386,7 @@ def equipes_fortes(jour: str | None = None, mise: float = 10.0) -> dict:
     Cache uniquement : ouvrir cet onglet ne consomme aucun credit API.
     """
     par_championnat = {}
-    for code in config.CHAMPIONNATS_AVEC_COTES:
+    for code in config.COMPETITIONS_AVEC_COTES:
         cotes, age = cotes_module.lire_cache(code)
         if not cotes.empty and age is not None:
             par_championnat[code] = cotes
@@ -1086,17 +1394,14 @@ def equipes_fortes(jour: str | None = None, mise: float = 10.0) -> dict:
         return {"erreur": "Aucune cote en cache. Utilise « Rafraichir les cotes »."}
 
     # Prime non exigee : on classe des favoris par probabilite, pas par prix.
-    fortes = quotidien_module.du_jour(par_championnat, prime_minimale=0.0)
     # Le cache garde des matchs deja joues : un combine « pret » ne peut pas
     # contenir une rencontre dont le coup d'envoi est passe.
-    maintenant = pd.Timestamp.now(tz="UTC")
-    fortes = [s for s in fortes if _coup_d_envoi(s.date) > maintenant]
-    if jour is not None:
-        fortes = [s for s in fortes if _jour_local(s.date) == jour]
-    fortes.sort(key=lambda s: s.p_marche, reverse=True)
-    if not fortes:
+    fortes = _a_venir_du_jour(
+        quotidien_module.du_jour(par_championnat, prime_minimale=0.0), jour)
+    elargies = listes_elargies(par_championnat, jour)
+    if not fortes and not elargies["vainqueurs"] and not elargies["buts"]:
         return {"erreur": f"Aucune equipe a plus de "
-                          f"{quotidien_module.SEUIL_PROBABILITE:.0%} selon le marche "
+                          f"{SEUIL_LISTES_ELARGIES:.0%} selon le marche "
                           f"{_libelle_jour(jour)}. Choisis un autre jour, "
                           "ou rafraichis les cotes.",
                 "jour": jour}
@@ -1125,15 +1430,16 @@ def equipes_fortes(jour: str | None = None, mise: float = 10.0) -> dict:
 
     return {
         "jour": jour,
-        "jours_couverts": sorted({_jour_local(s.date) for s in fortes}),
+        "jours_couverts": sorted({_jour_local(j["date"]) for j in (
+            [_jambe(s) for s in fortes] + elargies["vainqueurs"] + elargies["buts"])}),
         "seuil": quotidien_module.SEUIL_PROBABILITE,
         "roi_mesure": quotidien_module.ROI_MESURE,
         "roi_ic": list(quotidien_module.ROI_IC),
         "roi_nb_paris": quotidien_module.ROI_NB_PARIS,
         "mise": mise,
-        "fortes": [_jambe(s) | {"perd_une_fois_sur": 1.0 / max(1e-9, 1.0 - s.p_marche)}
-                   for s in fortes],
+        "fortes": [_avec_defaite(s) for s in fortes],
         "combines": combines,
+        **elargies,
     }
 
 
@@ -1144,16 +1450,18 @@ def championnats() -> list[dict]:
     pour n'interroger que les ligues qui ont deja des cotes : entrainer un
     modele pour une ligue dont on n'a aucune cote ne servirait a rien.
 
-    Seules les ligues cotees par The Odds API sont proposees. Les autres (National
+    Sont proposees les ligues cotees par The Odds API, et celles dont ESPN donne
+    le calendrier (`sans_cotes`, pronos du modele seul). Les autres (National
     League, divisions ecossaises inferieures) n'existent ici que comme historique
-    du modele inter-divisions : les afficher promettrait des matchs qu'aucun
-    bookmaker ne cote et qu'on ne pourrait donc jamais montrer.
+    du modele inter-divisions : on n'aurait aucun programme a montrer.
     """
     lignes = []
-    for code in config.CHAMPIONNATS_AVEC_COTES:
-        info = config.CHAMPIONNATS[code]
-        age = cotes_module.age_du_cache(code)
+    for code in config.COMPETITIONS_AFFICHEES:
+        info = config.COMPETITIONS[code]
+        sans_cotes = config.sans_cotes(code)
+        age = None if sans_cotes else cotes_module.age_du_cache(code)
         lignes.append({"code": code, "nom": info["nom"], "pays": info["pays"],
+                       "sans_cotes": sans_cotes,
                        "age_cotes_minutes": round(age / 60, 1) if age is not None else None})
     return lignes
 
@@ -1258,6 +1566,20 @@ class Gestionnaire(BaseHTTPRequestHandler):
                 self._json(500, {"erreur": _message_erreur(souci)})
         elif route.path == "/api/jour":
             self._etat(parse_qs(route.query), forcer=False)
+        elif route.path == "/api/statuts":
+            codes = [c.strip().upper() for c in
+                     (parse_qs(route.query).get("ligues", [""])[0] or "").split(",")
+                     if c.strip()]
+            inconnus = [c for c in codes if c not in config.COMPETITIONS]
+            if not codes or inconnus or len(codes) > len(config.COMPETITIONS):
+                self._json(400, {"erreur": "Ligues illisibles : "
+                                 + (", ".join(inconnus) or "aucune donnee")})
+            else:
+                try:
+                    self._json(200, statuts_du_jour(list(dict.fromkeys(codes))))
+                except Exception as souci:        # jamais une connexion coupee
+                    _journal.warning("%s : %s", type(souci).__name__, souci)
+                    self._json(500, {"erreur": _message_erreur(souci)})
         elif route.path == "/api/aujourdhui":
             self._aujourdhui(parse_qs(route.query))
         else:
@@ -1294,7 +1616,7 @@ class Gestionnaire(BaseHTTPRequestHandler):
 
     def _etat(self, parametres: dict[str, list[str]], forcer: bool) -> None:
         championnat = (parametres.get("championnat", ["F1"])[0] or "F1").upper()
-        if championnat not in config.CHAMPIONNATS:
+        if championnat not in config.COMPETITIONS:
             self._json(400, {"erreur": f"Championnat inconnu : {championnat}"})
             return
         try:
@@ -1341,7 +1663,7 @@ class Gestionnaire(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             self._json(400, {"erreur": "Requete illisible."})
             return
-        if championnat not in config.CHAMPIONNATS or bankroll <= 0:
+        if championnat not in config.COMPETITIONS or bankroll <= 0:
             self._json(400, {"erreur": "Championnat ou bankroll invalide."})
             return
         try:

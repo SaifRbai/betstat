@@ -1,7 +1,7 @@
 """Telechargement, cache et nettoyage des resultats football-data.co.uk.
 
 Source unique : https://www.football-data.co.uk/mmz4281/{saison}/{ligue}.csv
-et, pour les championnats joues sur l'annee civile (Bresil), le fichier unique
+et, pour les championnats joues sur l'annee civile (Bresil, Argentine, MLS...) et pour les championnats "extra", le fichier unique
 https://www.football-data.co.uk/new/{ligue}.csv qui contient toutes les saisons.
 Seule exception : la Serie B bresilienne, absente de football-data.co.uk, dont
 les resultats viennent d'API-Football et sont convertis au meme format CSV.
@@ -20,6 +20,7 @@ import pandas as pd
 import requests
 
 import config
+from data import espn as espn_module
 
 _journal = logging.getLogger("foot_edge.resultats")
 
@@ -119,6 +120,21 @@ def dernieres_saisons(nombre: int, aujourdhui: date | None = None) -> list[str]:
 def annee_civile(ligue: str) -> bool:
     """Ce championnat joue-t-il sa saison sur l'annee civile (Bresil) ?"""
     return ligue.upper() in config.CHAMPIONNATS_ANNEE_CIVILE
+
+
+def fichier_unique(ligue: str) -> bool:
+    """football-data publie-t-il ce championnat dans un seul fichier new/ ?"""
+    return ligue.upper() in config.CHAMPIONNATS_FICHIER_UNIQUE
+
+
+def libelles_saison(code: str) -> tuple[str, str]:
+    """Code saison "2627" -> ("2026/2027", "2026"), tels que dans la colonne Season.
+
+    Le second couvre un championnat passe de l'annee civile a une saison a
+    cheval (Japon en 2026) : sa saison "2025" devient le code "2526".
+    """
+    debut = 2000 + int(code[:2])
+    return f"{debut}/{debut + 1}", str(debut)
 
 
 def dernieres_annees(nombre: int, aujourdhui: date | None = None) -> list[str]:
@@ -231,7 +247,11 @@ def telecharger(ligue: str, saison: str, forcer: bool = False) -> Path | None:
     else:
         url = URL_MODELE.format(saison=saison, ligue=ligue.upper())
     try:
-        if ligue_api_football(ligue):
+        if espn_module.slug(ligue):
+            contenu = espn_module.csv_saison(ligue, saison)
+            if not contenu:
+                raise SaisonNonPubliee("aucun match termine sur ESPN pour cette saison")
+        elif ligue_api_football(ligue):
             contenu = _csv_api_football(ligue, saison)
         else:
             reponse = requests.get(url, timeout=DELAI_RESEAU)
@@ -484,10 +504,10 @@ def _saisons_brutes(
     """(code saison, CSV brut) pour chaque saison demandee et disponible.
 
     Un fichier par saison chez football-data (et un par saison API-Football),
-    sauf pour les championnats football-data sur l'annee civile : un seul
+    sauf pour les championnats publies dans un fichier unique (new/) : un seul
     fichier, decoupe ici selon sa colonne Season.
     """
-    if not annee_civile(ligue) or ligue_api_football(ligue):
+    if not fichier_unique(ligue):
         codes = (dernieres_annees(nb_saisons, aujourdhui) if annee_civile(ligue)
                  else dernieres_saisons(nb_saisons, aujourdhui))
         sortie = []
@@ -515,7 +535,11 @@ def _saisons_brutes(
     if "Season" not in brut.columns:
         return []
     annees = brut["Season"].astype("string").str.strip()
-    return [(annee, brut[annees == annee]) for annee in dernieres_annees(nb_saisons, aujourdhui)]
+    if annee_civile(ligue):
+        return [(annee, brut[annees == annee])
+                for annee in dernieres_annees(nb_saisons, aujourdhui)]
+    return [(code, brut[annees.isin(libelles_saison(code))])
+            for code in dernieres_saisons(nb_saisons, aujourdhui)]
 
 
 def nb_matchs_par_equipe(df: pd.DataFrame) -> dict[str, int]:

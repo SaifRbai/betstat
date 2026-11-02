@@ -76,20 +76,36 @@ def bouchons(monkeypatch):
 # Donnees servies
 # --------------------------------------------------------------------------
 
-def test_seules_les_ligues_cotees_sont_proposees():
-    """Une division sans cotes (National League, D3 ecossaise) n'existe ici que
-    comme historique du modele inter-divisions. La proposer promettrait des
-    matchs qu'aucun bookmaker ne cote et qu'on ne pourrait jamais afficher."""
-    codes = [c["code"] for c in web.championnats()]
-    assert codes == list(config.CHAMPIONNATS_AVEC_COTES)
+def test_seules_les_ligues_avec_un_programme_sont_proposees():
+    """Une division sans cotes ni calendrier (National League, D3 ecossaise)
+    n'existe ici que comme historique du modele inter-divisions. La proposer
+    promettrait des matchs qu'on ne pourrait jamais afficher. Les ligues sans
+    cotes dont ESPN donne le calendrier (Colombie...) viennent apres les autres."""
+    ligues = web.championnats()
+    codes = [c["code"] for c in ligues]
+    assert codes == list(config.COMPETITIONS_AVEC_COTES) + list(config.CHAMPIONNATS_SANS_COTES)
     assert "F1" in codes and "E0" in codes and "E3" in codes
+    assert "COL" in codes and "KSA" in codes
     assert "EC" not in codes and "SC3" not in codes
-    assert set(codes) < set(config.CHAMPIONNATS)
+    assert set(codes) < set(config.COMPETITIONS)
+    sans_cotes = {c["code"] for c in ligues if c["sans_cotes"]}
+    assert sans_cotes == set(config.CHAMPIONNATS_SANS_COTES)
+    assert "COL" in sans_cotes and "KSA" not in sans_cotes
+
+
+def test_les_coupes_sont_proposees_avec_les_championnats():
+    """Coupes d'Europe en tete, coupes nationales juste apres leur pays."""
+    codes = [c["code"] for c in web.championnats()]
+    assert codes[:3] == ["UCL", "UEL", "UECL"]
+    assert set(config.COUPES) <= set(codes)
+    assert codes.index("FAC") > codes.index("E0")
+    assert codes.index("FAC") < codes.index("SC0")
+    assert not set(config.COUPES) & set(config.CHAMPIONNATS)
 
 
 def test_chaque_ligue_porte_son_pays_pour_le_regroupement():
     for ligne in web.championnats():
-        assert ligne["pays"] == config.CHAMPIONNATS[ligne["code"]]["pays"]
+        assert ligne["pays"] == config.COMPETITIONS[ligne["code"]]["pays"]
 
 
 def test_une_equipe_sans_historique_est_signalee_pas_escamotee(bouchons):
@@ -214,7 +230,7 @@ def test_la_vue_du_jour_n_entraine_pas_les_ligues_au_repos(bouchons, monkeypatch
 def test_la_vue_du_jour_marque_chaque_match_de_sa_ligue(bouchons):
     etat = web.etat_aujourdhui(1000.0, jour=JOUR_DEMAIN)
     assert etat["matchs"], "la journee du bouchon n'est pas vide"
-    assert all(m["ligue"] in config.CHAMPIONNATS for m in etat["matchs"])
+    assert all(m["ligue"] in config.COMPETITIONS for m in etat["matchs"])
     assert etat["multi"] is True and etat["jour"] == JOUR_DEMAIN
 
 
@@ -756,7 +772,9 @@ def test_seuls_les_services_reellement_appeles_ont_un_compteur(monkeypatch):
     assert services["api_football"]["annonce_par_l_api"] == 95
     assert len(services["api_football"]["fenetre"]) == 2
 
-    assert services["football_data_org"]["utilise_par_l_outil"] is False
+    # football-data.org : resultats de Ligue des champions, sans compteur.
+    assert services["football_data_org"]["utilise_par_l_outil"] is True
+    assert "Ligue des champions" in services["football_data_org"]["usage"]
     assert services["football_data_org"]["consomme"] is None
     assert services["football_data_org"]["restant"] is None
 
@@ -842,3 +860,74 @@ def test_la_vue_aujourdhui_affiche_les_combines_prets():
     assert 'id="combines-aujourdhui"' in page
     corps = page[page.index("function afficher(etat)"):page.index("async function demanderLeJour(")]
     assert "afficherCombinesAujourdhui(etat.jour || null)" in corps
+
+
+def test_un_score_d_une_autre_rencontre_de_la_meme_affiche_est_refuse():
+    """Ligues a trois ou quatre confrontations : meme affiche, autre match."""
+    assert web._meme_journee("2026-10-31 00:00:00", "2026-10-31")
+    assert web._meme_journee("2026-10-30 00:00:00", "2026-10-31")    # fuseau
+    assert not web._meme_journee("2026-08-02 00:00:00", "2026-10-31")
+
+
+def test_les_listes_a_plus_de_50_pour_cent(monkeypatch):
+    """Vainqueurs (jamais le nul) et cote probable du plus/moins 2.5, tries."""
+    demain = f"{JOUR_DEMAIN}T18:45:00Z"
+    nul = _favori("Nul", 0.55, 1.80, demain)
+    nul.selection = "N"
+    vainqueurs = [_favori("Lens", 0.56, 1.70, demain), nul,
+                  _favori("Lyon", 0.64, 1.50, demain),
+                  _favori("Deja joue", 0.90, 1.05, HORODATAGE_PASSE)]
+    plus = _favori("Brest", 0.58, 1.65, demain)
+    plus.selection, plus.equipe = "plus_moins_2.5:plus", "plus de 2.5 buts"
+    gg = _favori("Nice", 0.70, 1.40, demain)
+    gg.selection = "btts:oui"
+    monkeypatch.setattr(web.quotidien_module, "candidats",
+                        lambda *a, **k: list(vainqueurs))
+    monkeypatch.setattr(web.quotidien_module, "candidats_multi",
+                        lambda *a, **k: [plus, gg])
+
+    listes = web.listes_elargies({"F1": COTES}, None)
+    assert [v["dom"] for v in listes["vainqueurs"]] == ["Lyon", "Lens"]
+    assert [b["equipe"] for b in listes["buts"]] == ["plus de 2.5 buts"]
+    assert listes["buts"][0]["perd_une_fois_sur"] == pytest.approx(1 / 0.42)
+
+
+def test_les_statuts_en_direct_ne_renvoient_que_ce_qui_bouge(monkeypatch):
+    carte = {"date": "2026-10-31T14:00:00+00:00", "dom": "Lens", "ext": "Lille",
+             "statut": "en_cours", "direct": {"buts_dom": 1.0, "buts_ext": 0.0,
+                                               "minute": 55, "statut": "2H"},
+             "resultat": None, "joue": True, "1": 0.4, "pronos": ["lourd"]}
+    monkeypatch.setattr(web, "affiches", lambda code, jour=None: ([carte], [], None))
+    charge = web.statuts_du_jour(["F1"])
+    assert charge["matchs"] == [{"ligue": "F1", "verdicts": None, "annulation": None} | {
+        cle: carte[cle] for cle in ("date", "dom", "ext", "statut", "direct",
+                                    "resultat", "joue")}]
+
+
+@pytest.mark.parametrize("requete", ["/api/statuts", "/api/statuts?ligues=F1,ZZZ"])
+def test_les_statuts_refusent_une_ligue_inconnue(serveur, requete):
+    code, charge = _get(serveur, requete)
+    assert code == 400 and "erreur" in charge
+
+
+def test_un_match_de_coupe_porte_son_modele_et_sa_reserve(bouchons, monkeypatch):
+    """Une coupe n'a pas de modele a elle : la carte doit dire lequel elle emprunte."""
+    description = {"type": "europe", "championnats": ["E0", "F1"], "matchs": 2000,
+                   "equipes": 40, "matchs_europeens": 30, "ecartes": []}
+    monkeypatch.setattr(web.CACHE, "coupe", lambda c: description)
+    matchs, _, _ = web.affiches("UCL")
+    assert matchs and matchs[0]["coupe"] == description
+    assert matchs[0]["pronos_annexes"] == []
+    reserves = " ".join(r for p in matchs[0]["pronos"] for r in p.get("reserves", []))
+    assert "30 matchs de Ligue des champions" in reserves
+
+
+def test_une_coupe_n_a_ni_corners_ni_cartons():
+    assert web.CACHE.annexes("UCL") == {}
+
+
+def test_les_resultats_d_une_coupe_ne_sont_pas_cherches_chez_football_data(monkeypatch):
+    def interdit(*a, **k):
+        raise AssertionError("football-data.co.uk ne publie aucune coupe")
+    monkeypatch.setattr(web.resultats_module, "charger", interdit)
+    assert web._Resultats()._ligue("FAC") == {}

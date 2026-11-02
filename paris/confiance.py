@@ -248,6 +248,123 @@ def prono_1n2(prediction: dict, dom: str, ext: str,
 
 
 # --------------------------------------------------------------------------
+# Le choix le plus sur d'un match
+# --------------------------------------------------------------------------
+
+# Sous cette cote, le pari « sur » ne rapporte presque rien et une seule perte
+# efface une longue serie de gains : a 1.15, il faut gagner sept fois pour
+# rembourser un echec. Ce n'est plus une facon de jouer le match.
+COTE_MINIMALE_SURE = 1.20
+
+# En dessous, rien n'est « sur » sur ce match : on le dit plutot que d'elire
+# le moins mauvais candidat.
+SEUIL_CHOIX_SUR = 0.60
+
+_DOUBLES_CHANCES = {"1N": ("1", "N"), "N2": ("N", "2"), "12": ("1", "2")}
+
+
+def _melange(p_modele: float, p_marche: float | None, a: float) -> float:
+    if p_marche is None:
+        return p_modele
+    return float(calibration.melange_geometrique(
+        np.array([p_modele, 1 - p_modele]), np.array([p_marche, 1 - p_marche]), a)[0])
+
+
+def choix_le_plus_sur(prediction: dict, dom: str, ext: str,
+                      p_marche: dict[tuple[str, str], float] | None = None,
+                      meilleures_cotes: dict[str, float] | None = None,
+                      reserves_communes: list[str] | None = None,
+                      a_melange: float = 0.3) -> dict | None:
+    """La facon de jouer ce match qui a le plus de chances de passer.
+
+    Seulement parmi ce qu'on peut REELLEMENT jouer a un prix connu :
+      - 1N2 et plus/moins 2.5 buts, a la meilleure cote des bookmakers ;
+      - double chance, au prix obtenu en repartissant la mise sur les deux
+        issues chez les bookmakers (1/(1/c1 + 1/c2)) : c'est un prix reel,
+        pas une estimation, et un bookmaker qui cote la double chance offre
+        en general un peu moins.
+
+    La probabilite retenue est le melange modele/marche (`p_finale`), comme
+    partout ou une decision est en jeu. Sont ecartes : un choix sous
+    `COTE_MINIMALE_SURE`, et un choix ou modele et marche divergent de plus de
+    `config.SEUIL_DIVERGENCE_ALERTE` — un « sur » que le marche conteste ne
+    l'est pas.
+
+    « Sur » ne veut pas dire rentable : l'esperance est rendue telle quelle, et
+    elle est le plus souvent negative, parce que la marge du bookmaker pese
+    d'abord sur les favoris.
+    """
+    p_marche = p_marche or {}
+    cotes = meilleures_cotes or {}
+    issues = prediction.get("1N2") or {}
+    totaux = prediction.get("totaux") or {}
+    doubles = prediction.get("double_chance") or {}
+    reserves = list(reserves_communes or [])
+
+    candidats: list[dict] = []
+
+    def ajouter(marche, selection, libelle, p_mod, p_mar, cote, comment):
+        if p_mod is None or not cote:
+            return
+        p_mod = float(p_mod)
+        if p_mar is not None and abs(p_mod - p_mar) > config.SEUIL_DIVERGENCE_ALERTE:
+            return
+        if cote < COTE_MINIMALE_SURE:
+            return
+        p_fin = _melange(p_mod, p_mar, a_melange)
+        candidats.append({
+            "marche": marche, "selection": selection, "libelle": libelle,
+            "p_modele": p_mod, "p_marche": p_mar, "p_finale": p_fin,
+            "cote": round(float(cote), 2), "comment": comment,
+            "esperance": p_fin * cote - 1.0,
+            "echoue_1_fois_sur": 1.0 / max(1.0 - p_fin, 1e-9),
+        })
+
+    for sel in ("1", "N", "2"):
+        ajouter("1N2", sel, _LIBELLES_1N2[sel].format(dom=dom, ext=ext),
+                issues.get(sel), p_marche.get(("1N2", sel)), cotes.get(sel),
+                "chez le bookmaker qui offre la meilleure cote")
+    for sel, libelle in (("plus", "Plus de 2.5 buts"), ("moins", "Moins de 2.5 buts")):
+        ajouter("totaux 2.5", sel, libelle, totaux.get(f"{sel}_2.5"),
+                p_marche.get(("plus_moins_2.5", sel)), cotes.get(sel),
+                "chez le bookmaker qui offre la meilleure cote")
+    for sel, (a, b) in _DOUBLES_CHANCES.items():
+        ca, cb = cotes.get(a), cotes.get(b)
+        if not (ca and cb):
+            continue
+        pa, pb = p_marche.get(("1N2", a)), p_marche.get(("1N2", b))
+        cote = 1.0 / (1.0 / ca + 1.0 / cb)
+        part_a = (1.0 / ca) * cote                    # part de la mise sur `a`
+        ajouter("double chance", sel, _LIBELLES_DC[sel].format(dom=dom, ext=ext),
+                doubles.get(sel), None if pa is None or pb is None else pa + pb, cote,
+                f"double chance du bookmaker, ou mise repartie {part_a:.0%} sur "
+                f"« {a} » (cote {ca:.2f}) et {1 - part_a:.0%} sur « {b} » (cote {cb:.2f})")
+
+    if not candidats:
+        return {"choix": None, "alternatives": [], "sur": False, "reserves": reserves,
+                "explication": "aucun marche cote au-dessus de "
+                               f"{COTE_MINIMALE_SURE:.2f} sur lequel modele et "
+                               "marche s'accordent"}
+    candidats.sort(key=lambda c: c["p_finale"], reverse=True)
+    choix = candidats[0]
+    if choix["p_finale"] < SEUIL_CHOIX_SUR:
+        # Elire un nul a 17 % « choix le plus sur » serait absurde : quand
+        # rien n'atteint le seuil, il n'y a pas de facon sure de jouer ce match.
+        return {"choix": None, "alternatives": [], "sur": False, "reserves": reserves,
+                "explication": f"rien n'atteint {SEUIL_CHOIX_SUR:.0%} parmi les paris "
+                               "sur lesquels modele et marche s'accordent"}
+    return {
+        "choix": choix,
+        "alternatives": candidats[1:3],
+        "sur": choix["p_finale"] >= SEUIL_CHOIX_SUR and not reserves,
+        "seuil": SEUIL_CHOIX_SUR,
+        "cote_minimale": COTE_MINIMALE_SURE,
+        "reserves": reserves,
+        "explication": None,
+    }
+
+
+# --------------------------------------------------------------------------
 # Corners et cartons jaunes
 # --------------------------------------------------------------------------
 

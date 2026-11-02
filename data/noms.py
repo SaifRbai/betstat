@@ -17,12 +17,14 @@ import json
 import re
 import unicodedata
 from difflib import SequenceMatcher
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
 CHEMIN_TABLE = Path(__file__).resolve().parent / "noms_equipes.json"
 
-SOURCES = ("football_data", "fbref", "understat", "odds_api", "api_football")
+SOURCES = ("football_data", "fbref", "understat", "odds_api", "api_football",
+           "football_data_org", "espn")
 
 # Seuil au-dela duquel on propose une correspondance a l'humain. En dessous,
 # on ne propose meme pas. Dans tous les cas on ne valide jamais tout seul.
@@ -41,6 +43,9 @@ _MOTS_GENERIQUES = frozenset({
 # Normalisation
 # --------------------------------------------------------------------------
 
+# Fonctions pures, appelees des centaines de milliers de fois par page : chaque
+# rencontre du jour d'API-Football est comparee a chaque equipe du modele.
+@lru_cache(maxsize=65536)
 def normaliser(nom: str) -> str:
     """Forme comparable d'un nom : sans accents, minuscules, sans ponctuation."""
     if nom is None:
@@ -52,6 +57,7 @@ def normaliser(nom: str) -> str:
     return re.sub(r"\s+", " ", texte).strip()
 
 
+@lru_cache(maxsize=65536)
 def noyau(nom: str) -> str:
     """Normalisation plus agressive : retire les mots generiques de club."""
     mots = normaliser(nom).split()

@@ -111,17 +111,127 @@ CHAMPIONNATS: Final[dict[str, dict[str, str | bool | None]]] = {
     # unique (new/BRA.csv) qui couvre toutes les saisons : voir data/resultats.py.
     "BRA": {"nom": "Brasileirao Serie A", "pays": "Bresil",
             "odds": "soccer_brazil_campeonato", "fbref": None, "understat": None,
-            "annee_civile": True},
-    # Absente de football-data.co.uk : resultats tires d'API-Football (ligue 72),
-    # dont le plan gratuit ne couvre que les saisons 2022 a 2024.
+            "annee_civile": True, "fichier_unique": True},
+    # Absente de football-data.co.uk : resultats tires d'ESPN (data/espn.py).
+    # API-Football (ligue 72) ne sert plus : son plan gratuit s'arrete a 2024.
     "BRB": {"nom": "Brasileirao Serie B", "pays": "Bresil",
             "odds": "soccer_brazil_serie_b", "fbref": None, "understat": None,
-            "annee_civile": True, "api_football": 72},
+            "annee_civile": True, "espn": "bra.2"},
+    # Championnats "extra" de football-data.co.uk : un fichier unique new/{code}.csv
+    # chacun, comme le Bresil. Sa colonne Season vaut "2026" pour ceux qui jouent
+    # sur l'annee civile, "2026/2027" pour les autres.
+    "ARG": {"nom": "Liga Profesional", "pays": "Argentine",
+            "odds": "soccer_argentina_primera_division", "fbref": None, "understat": None,
+            "annee_civile": True, "fichier_unique": True},
+    "AUT": {"nom": "Bundesliga autrichienne", "pays": "Autriche",
+            "odds": "soccer_austria_bundesliga", "fbref": None, "understat": None,
+            "fichier_unique": True},
+    "CHN": {"nom": "Super League chinoise", "pays": "Chine",
+            "odds": "soccer_china_superleague", "fbref": None, "understat": None,
+            "annee_civile": True, "fichier_unique": True},
+    "DNK": {"nom": "Superliga", "pays": "Danemark",
+            "odds": "soccer_denmark_superliga", "fbref": None, "understat": None,
+            "fichier_unique": True},
+    "FIN": {"nom": "Veikkausliiga", "pays": "Finlande",
+            "odds": "soccer_finland_veikkausliiga", "fbref": None, "understat": None,
+            "annee_civile": True, "fichier_unique": True},
+    "IRL": {"nom": "Premier Division", "pays": "Irlande",
+            "odds": "soccer_league_of_ireland", "fbref": None, "understat": None,
+            "annee_civile": True, "fichier_unique": True},
+    # La J1 League passe a une saison a cheval sur deux annees en 2026/2027.
+    "JPN": {"nom": "J1 League", "pays": "Japon",
+            "odds": "soccer_japan_j_league", "fbref": None, "understat": None,
+            "fichier_unique": True},
+    "MEX": {"nom": "Liga MX", "pays": "Mexique",
+            "odds": "soccer_mexico_ligamx", "fbref": None, "understat": None,
+            "fichier_unique": True},
+    "NOR": {"nom": "Eliteserien", "pays": "Norvege",
+            "odds": "soccer_norway_eliteserien", "fbref": None, "understat": None,
+            "annee_civile": True, "fichier_unique": True},
+    "POL": {"nom": "Ekstraklasa", "pays": "Pologne",
+            "odds": "soccer_poland_ekstraklasa", "fbref": None, "understat": None,
+            "fichier_unique": True},
+    "ROU": {"nom": "Superliga roumaine", "pays": "Roumanie",
+            "odds": None, "fbref": None, "understat": None,
+            "fichier_unique": True},
+    "RUS": {"nom": "Premier League russe", "pays": "Russie",
+            "odds": "soccer_russia_premier_league", "fbref": None, "understat": None,
+            "fichier_unique": True},
+    "SWE": {"nom": "Allsvenskan", "pays": "Suede",
+            "odds": "soccer_sweden_allsvenskan", "fbref": None, "understat": None,
+            "annee_civile": True, "fichier_unique": True},
+    "SWZ": {"nom": "Super League suisse", "pays": "Suisse",
+            "odds": "soccer_switzerland_superleague", "fbref": None, "understat": None,
+            "fichier_unique": True},
+    "USA": {"nom": "MLS", "pays": "Etats-Unis",
+            "odds": "soccer_usa_mls", "fbref": None, "understat": None,
+            "annee_civile": True, "fichier_unique": True},
+    # Championnats absents de football-data.co.uk : resultats et, pour ceux
+    # que The Odds API ne cote pas, calendrier tires d'ESPN (data/espn.py),
+    # sans cle ni quota. Une saison "a cheval" court de juillet a juillet.
+    "KSA": {"nom": "Saudi Pro League", "pays": "Arabie saoudite",
+            "odds": "soccer_saudi_arabia_pro_league", "fbref": None, "understat": None,
+            "espn": "ksa.1"},
+    "CHI": {"nom": "Primera Division", "pays": "Chili",
+            "odds": "soccer_chile_campeonato", "fbref": None, "understat": None,
+            "annee_civile": True, "espn": "chi.1"},
+    "AUS": {"nom": "A-League", "pays": "Australie",
+            "odds": "soccer_australia_aleague", "fbref": None, "understat": None,
+            "espn": "aus.1"},
+    # Sans cotes : pronos du modele seul, sans comparaison au marche ni mise.
+    "COL": {"nom": "Liga BetPlay", "pays": "Colombie",
+            "odds": None, "fbref": None, "understat": None,
+            "annee_civile": True, "espn": "col.1"},
+    "ECU": {"nom": "LigaPro", "pays": "Equateur",
+            "odds": None, "fbref": None, "understat": None,
+            "annee_civile": True, "espn": "ecu.1"},
+    "PER": {"nom": "Liga 1", "pays": "Perou",
+            "odds": None, "fbref": None, "understat": None,
+            "annee_civile": True, "espn": "per.1"},
+    "URU": {"nom": "Liga AUF", "pays": "Uruguay",
+            "odds": None, "fbref": None, "understat": None,
+            "annee_civile": True, "espn": "uru.1"},
+    "PAR": {"nom": "Primera Division", "pays": "Paraguay",
+            "odds": None, "fbref": None, "understat": None,
+            "annee_civile": True, "espn": "par.1"},
+    "BOL": {"nom": "Division Profesional", "pays": "Bolivie",
+            "odds": None, "fbref": None, "understat": None,
+            "annee_civile": True, "espn": "bol.1"},
+    "VEN": {"nom": "Liga FUTVE", "pays": "Venezuela",
+            "odds": None, "fbref": None, "understat": None,
+            "annee_civile": True, "espn": "ven.1"},
+    "CRC": {"nom": "Primera Division", "pays": "Costa Rica",
+            "odds": None, "fbref": None, "understat": None, "espn": "crc.1"},
+    "GUA": {"nom": "Liga Nacional", "pays": "Guatemala",
+            "odds": None, "fbref": None, "understat": None, "espn": "gua.1"},
+    "HON": {"nom": "Liga Nacional", "pays": "Honduras",
+            "odds": None, "fbref": None, "understat": None, "espn": "hon.1"},
+    "SLV": {"nom": "Primera Division", "pays": "Salvador",
+            "odds": None, "fbref": None, "understat": None, "espn": "slv.1"},
+    "RSA": {"nom": "Premiership", "pays": "Afrique du Sud",
+            "odds": None, "fbref": None, "understat": None, "espn": "rsa.1"},
 }
+
+# Championnats tires d'ESPN (resultats, et calendrier quand ils n'ont pas de cotes).
+CHAMPIONNATS_ESPN: Final[frozenset[str]] = frozenset(
+    code for code, info in CHAMPIONNATS.items() if info.get("espn")
+)
+
+# Championnats affiches sans cotes : ESPN fournit leur calendrier, le modele
+# leurs probabilites. Ni valeur, ni mise, ni combine : sans prix, rien a jouer.
+CHAMPIONNATS_SANS_COTES: Final[tuple[str, ...]] = tuple(
+    code for code, info in CHAMPIONNATS.items() if info.get("espn") and not info["odds"]
+)
 
 # Championnats dont la saison suit l'annee civile ("2026" et non "2526").
 CHAMPIONNATS_ANNEE_CIVILE: Final[frozenset[str]] = frozenset(
     code for code, info in CHAMPIONNATS.items() if info.get("annee_civile")
+)
+
+# Championnats publies par football-data.co.uk dans un fichier unique
+# (new/{code}.csv) qui couvre toutes les saisons.
+CHAMPIONNATS_FICHIER_UNIQUE: Final[frozenset[str]] = frozenset(
+    code for code, info in CHAMPIONNATS.items() if info.get("fichier_unique")
 )
 
 CODES_CHAMPIONNATS: Final[tuple[str, ...]] = tuple(CHAMPIONNATS)
@@ -155,9 +265,75 @@ CHAMPIONNATS_AVEC_XG: Final[tuple[str, ...]] = tuple(
 )
 
 
+# --------------------------------------------------------------------------
+# Coupes
+# --------------------------------------------------------------------------
+
+# Les coupes n'ont pas d'historique propre exploitable : un tour de coupe met
+# face a face des equipes qui ne se sont presque jamais rencontrees. Elles
+# n'ont donc pas de modele a elles, seulement un modele d'emprunt (voir
+# modele/coupes.py) :
+#   - "nationale" : le modele inter-divisions du pays de `rattachement`, ou a
+#     defaut celui de ce seul championnat ;
+#   - "europe"    : un modele commun aux premieres divisions europeennes, mises
+#     a la meme echelle par les matchs de Ligue des champions (football-data.org).
+# Elles restent hors de CHAMPIONNATS : tout ce qui parcourt ce dictionnaire
+# (telechargement des CSV football-data.co.uk, backtests, calibration) n'a
+# rien a faire d'une coupe.
+COUPES: Final[dict[str, dict[str, str | bool | None]]] = {
+    "UCL": {"nom": "Ligue des champions", "pays": "Coupes d'Europe",
+            "odds": "soccer_uefa_champs_league", "type": "europe"},
+    "UEL": {"nom": "Ligue Europa", "pays": "Coupes d'Europe",
+            "odds": "soccer_uefa_europa_league", "type": "europe"},
+    "UECL": {"nom": "Ligue Conference", "pays": "Coupes d'Europe",
+             "odds": "soccer_uefa_europa_conference_league", "type": "europe"},
+    "FAC": {"nom": "FA Cup", "pays": "Angleterre",
+            "odds": "soccer_fa_cup", "type": "nationale", "rattachement": "E0"},
+    "EFL": {"nom": "EFL Cup", "pays": "Angleterre",
+            "odds": "soccer_england_efl_cup", "type": "nationale", "rattachement": "E0"},
+    "CDR": {"nom": "Copa del Rey", "pays": "Espagne",
+            "odds": "soccer_spain_copa_del_rey", "type": "nationale", "rattachement": "SP1"},
+    "CIT": {"nom": "Coppa Italia", "pays": "Italie",
+            "odds": "soccer_italy_coppa_italia", "type": "nationale", "rattachement": "I1"},
+    "DFB": {"nom": "DFB-Pokal", "pays": "Allemagne",
+            "odds": "soccer_germany_dfb_pokal", "type": "nationale", "rattachement": "D1"},
+    "CDF": {"nom": "Coupe de France", "pays": "France",
+            "odds": "soccer_france_coupe_de_france", "type": "nationale", "rattachement": "F1"},
+}
+
+# Tout ce que la page peut afficher : championnats et coupes, dans un seul
+# registre pour les recherches par code (nom, cle The Odds API, pays).
+COMPETITIONS: Final[dict[str, dict[str, str | bool | None]]] = {**CHAMPIONNATS, **COUPES}
+
+# Les coupes d'Europe d'abord : ce sont elles qu'on cherche en semaine. Les
+# coupes nationales suivent leurs championnats, groupees sous le meme pays.
+COMPETITIONS_AVEC_COTES: Final[tuple[str, ...]] = (
+    tuple(c for c, info in COUPES.items() if info["type"] == "europe")
+    + tuple(c for pays in DIVISIONS_PAR_PAYS for c in (
+        *(d for d in DIVISIONS_PAR_PAYS[pays] if CHAMPIONNATS[d]["odds"]),
+        *(k for k, info in COUPES.items()
+          if info["type"] == "nationale" and info["pays"] == pays)))
+)
+
+# Ce que la page propose : les competitions cotees, puis les championnats
+# sans cotes dont ESPN donne le calendrier (pronos du modele seul).
+COMPETITIONS_AFFICHEES: Final[tuple[str, ...]] = (
+    COMPETITIONS_AVEC_COTES + CHAMPIONNATS_SANS_COTES)
+
+
+def sans_cotes(code: str) -> bool:
+    """Vrai pour un championnat affiche sans aucune cote (calendrier ESPN)."""
+    return code.upper() in CHAMPIONNATS_SANS_COTES
+
+
+def est_coupe(code: str) -> bool:
+    """Vrai pour une coupe, nationale ou europeenne."""
+    return code.upper() in COUPES
+
+
 def nom_championnat(code: str) -> str:
-    """Nom lisible d'un championnat, ou le code lui-meme s'il est inconnu."""
-    info = CHAMPIONNATS.get(code.upper())
+    """Nom lisible d'un championnat ou d'une coupe, ou le code s'il est inconnu."""
+    info = COMPETITIONS.get(code.upper())
     return str(info["nom"]) if info else code
 
 
@@ -231,15 +407,16 @@ _SERVICES: Final[dict[str, tuple[str, str, str]]] = {
 }
 
 # Ce que chaque service offre gratuitement, et si cet outil l'appelle vraiment.
-# football-data.org reste marque comme inutilise, et ce n'est pas un oubli : sur
-# le plan gratuit, ses arbitres ne sont jamais renseignes (mesure : 0 match sur
-# 373), ses cotes sont derriere un paquet payant, et son classement n'apporte
-# rien que les CSV football-data.co.uk ne donnent deja en plus riche. Afficher
-# un compteur pour ce service laisserait croire a une fonctionnalite qui
-# n'existe pas.
+# football-data.org ne sert qu'a une chose : les resultats de Ligue des
+# champions, qui relient les championnats entre eux pour le modele des coupes
+# d'Europe (data/europe.py). Ses arbitres ne sont jamais renseignes sur le plan
+# gratuit (mesure : 0 match sur 373), ses cotes sont payantes et son classement
+# n'apporte rien de plus que les CSV football-data.co.uk. Un appel par saison,
+# relu au plus toutes les six heures : son quota par minute n'est jamais
+# approche, et il n'a donc pas de compteur.
 _QUOTAS: Final[dict[str, tuple[int, str, bool]]] = {
     "odds": (QUOTA_MENSUEL_ODDS_API, "mois", True),
-    "football_data_org": (10, "minute", False),
+    "football_data_org": (10, "minute", True),
     "api_football": (QUOTA_QUOTIDIEN_API_FOOTBALL, "jour", True),
 }
 

@@ -180,3 +180,57 @@ def test_un_prono_annexe_porte_toujours_la_reserve_du_marche_absent() -> None:
 
 def test_prono_comptes_sans_totaux_ne_renvoie_rien() -> None:
     assert confiance.prono_comptes({"attendu_total": 5.0}, "Lyon", "Nice") is None
+
+
+# --------------------------------------------------------------------------
+# Choix le plus sur
+# --------------------------------------------------------------------------
+
+def _prediction_sure():
+    return {"1N2": {"1": 0.62, "N": 0.22, "2": 0.16},
+            "double_chance": {"1N": 0.84, "12": 0.78, "N2": 0.38},
+            "totaux": {"plus_2.5": 0.55, "moins_2.5": 0.45}}
+
+
+def test_le_choix_sur_prefere_la_double_chance_au_prix_reel():
+    from paris import confiance
+    marche = {("1N2", "1"): 0.60, ("1N2", "N"): 0.23, ("1N2", "2"): 0.17}
+    cotes = {"1": 1.75, "N": 4.00, "2": 5.80, "plus": 1.80, "moins": 2.05}
+    r = confiance.choix_le_plus_sur(_prediction_sure(), "A", "B", marche, cotes, [])
+    assert r["choix"]["selection"] == "1N"
+    # Prix obtenu en repartissant la mise sur 1 et N.
+    assert abs(r["choix"]["cote"] - round(1 / (1 / 1.75 + 1 / 4.00), 2)) < 1e-9
+    assert r["sur"] is True
+    assert r["choix"]["esperance"] < 0.05
+
+
+def test_une_cote_trop_basse_n_est_pas_une_facon_de_jouer():
+    from paris import confiance
+    cotes = {"1": 1.05, "N": 15.0, "2": 30.0}
+    pred = {"1N2": {"1": 0.93, "N": 0.05, "2": 0.02}, "double_chance": {}, "totaux": {}}
+    r = confiance.choix_le_plus_sur(pred, "A", "B", {}, cotes, [])
+    assert r["choix"] is None or r["choix"]["cote"] >= confiance.COTE_MINIMALE_SURE
+
+
+def test_un_choix_que_le_marche_conteste_est_ecarte():
+    from paris import confiance
+    pred = {"1N2": {"1": 0.80, "N": 0.12, "2": 0.08}, "double_chance": {}, "totaux": {}}
+    marche = {("1N2", "1"): 0.45, ("1N2", "N"): 0.28, ("1N2", "2"): 0.27}
+    cotes = {"1": 2.10, "N": 3.40, "2": 3.50}
+    r = confiance.choix_le_plus_sur(pred, "A", "B", marche, cotes, [])
+    assert r["choix"] is None or r["choix"]["selection"] != "1"
+
+
+def test_une_reserve_empeche_de_dire_sur():
+    from paris import confiance
+    cotes = {"1": 1.60, "N": 4.20, "2": 5.80}
+    r = confiance.choix_le_plus_sur(_prediction_sure(), "A", "B", {}, cotes,
+                                    ["A n'a que 3 match(s)"])
+    assert r["choix"] is not None and r["sur"] is False
+
+
+def test_sous_le_seuil_il_n_y_a_pas_de_choix_sur():
+    from paris import confiance
+    pred = {"1N2": {"1": 0.40, "N": 0.30, "2": 0.30}, "double_chance": {}, "totaux": {}}
+    r = confiance.choix_le_plus_sur(pred, "A", "B", {}, {"1": 2.4, "N": 3.3, "2": 3.3}, [])
+    assert r["choix"] is None and "60" in r["explication"]
