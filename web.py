@@ -701,10 +701,26 @@ def affiches(championnat: str,
                              "equipes": rapport.nb_equipes,
                              "ponts": dict(rapport.ponts)}
         if dom is None or ext is None or dom == ext:
+            # Le modele se tait, le marche non : ses probabilites (marge
+            # retiree) restent la meilleure estimation disponible. La page les
+            # montre comme telles, sans prono du modele ni mise.
+            marche = {}
+            if not sans_cotes:
+                brut = marche_devigge.get((ligne.dom, ligne.ext), {})
+                for (nom_marche, selection), valeur in brut.items():
+                    if nom_marche == cotes_module.MARCHE_1N2 and selection in ("1", "N", "2"):
+                        marche[selection] = valeur
+                    elif nom_marche == cotes_module.MARCHE_TOTAUX:
+                        marche[selection] = valeur
+            detail = ([] if sans_cotes else
+                      cotes_module.par_bookmaker(cotes, ligne.date, ligne.dom, ligne.ext))
             ecartes.append({
                 "date": str(ligne.date), "dom": ligne.dom, "ext": ligne.ext,
                 "inconnues": [n for n, r in ((ligne.dom, dom), (ligne.ext, ext))
-                              if r is None]})
+                              if r is None],
+                "marche": marche,
+                "meilleures_cotes": cotes_module.meilleures_cotes(detail),
+                "bookmakers": len(detail)})
             continue
         # L'historique des cotes garde le nom brut d'avant un alias ajoute depuis
         # (« Bodø/Glimt » puis « Bodo/Glimt ») : resolus, c'est le meme match.

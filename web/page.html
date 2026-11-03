@@ -140,6 +140,10 @@
   }
   /* Le cadre entier porte le verdict de la double chance (1X, 12, X2) : c'est
      le pari le plus couvert de la carte, donc celui qui se lit de loin. */
+  /* Marche seul : meme carte, bord pointille, pour ne pas la confondre avec
+     une estimation du modele. */
+  #ecartes .match { color: var(--encre); margin-top: 8px; }
+  .match.marche-seul { border-style: dashed; }
   .match.cadre-juste { border-color: var(--juste-encre); box-shadow: 0 0 0 1px var(--juste-encre); }
   .match.cadre-rate { border-color: var(--rate-encre); box-shadow: 0 0 0 1px var(--rate-encre); }
   .heure { color: var(--doux); font-variant-numeric: tabular-nums; font-size: 13px; }
@@ -1792,11 +1796,54 @@ function afficherEcartes(ecartes) {
   const hote = $("ecartes");
   hote.hidden = !ecartes || !ecartes.length;
   if (hote.hidden) return;
-  const noms = [...new Set(ecartes.flatMap((e) => e.inconnues))].join(", ");
-  hote.textContent = `${ecartes.length} match(s) laisse(s) de cote : `
-    + ecartes.map((e) => `${e.dom} - ${e.ext}`).join(", ")
-    + `. ${noms} n'a pas d'historique dans les saisons chargees (promu ?), `
-    + "le modele ne peut rien en estimer.";
+  const inconnues = [...new Set(ecartes.flatMap((e) => e.inconnues))];
+  hote.textContent = "";
+  const entete = document.createElement("div");
+  entete.textContent = `${ecartes.length} match(s) sans estimation du modele : `
+    + `${inconnues.join(", ")} ${inconnues.length > 1 ? "n'ont" : "n'a"} pas `
+    + "d'historique dans les saisons chargees. "
+    + "Ci-dessous, les probabilites du marche seul (marge retiree) : "
+    + "ni prono du modele, ni mise conseillee.";
+  hote.appendChild(entete);
+  const tries = [...ecartes].sort((a, b) => a.date.localeCompare(b.date));
+  for (const e of tries) hote.appendChild(carteMarcheSeul(e));
+}
+
+// Un match que le modele ne sait pas estimer : on montre ce que dit le marche,
+// et rien de plus. Pas de barre si aucun bookmaker ne le cote.
+function carteMarcheSeul(e) {
+  const d = new Date(e.date);
+  const heure = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const jour = libelleJour(e.date);
+  const p = e.marche || {};
+  const best = e.meilleures_cotes || {};
+  const div = document.createElement("div");
+  div.className = "match marche-seul";
+  const a1n2 = ["1", "N", "2"].every((s) => typeof p[s] === "number");
+  const cote = (s) => (best[s] ? ` @ ${best[s].toFixed(2)}` : "");
+  div.innerHTML = `
+    <div class="heure">${heure}<br><small>${jour}</small></div>
+    <div>
+      <div class="equipes">${e.dom} — ${e.ext}</div>
+      <div class="secondaire">
+        <span>marche seul</span>
+        ${typeof p.plus === "number" ? `<span>+2.5 buts ${pourcent(p.plus)}${cote("plus")}</span>` : ""}
+        <span>${e.bookmakers ? e.bookmakers + " bookmakers" : "sans cotes"}</span>
+      </div>
+      <div class="fragile">Inconnue(s) du modele : ${(e.inconnues || []).join(", ")}.</div>
+    </div>
+    <div>${a1n2 ? `
+      <div class="barre">
+        ${["1", "N", "2"].map((sel, i) => {
+          const part = p[sel];
+          return `<span class="${["b1", "bn", "b2"][i]}" style="width:${part * 100}%"
+                   title="${sel} : ${pourcent(part)}${cote(sel)}">${part >= 0.12 ? pourcent(part) : ""}</span>`;
+        }).join("")}
+      </div>
+      <div class="secondaire"><span>1${cote("1")}</span><span>N${cote("N")}</span><span>2${cote("2")}</span></div>`
+      : `<div class="secondaire">aucune cote disponible</div>`}
+    </div>`;
+  return div;
 }
 
 // Le bilan mesure de la regle, en tete du coupon. « Gain attendu » est une
