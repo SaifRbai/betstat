@@ -11,6 +11,11 @@
       "odds_api": [],
       "understat": []
     },
+    "AC Sparta Praha": {
+      "odds_api": [
+        "Sparta Prague"
+      ]
+    },
     "AD Ceuta FC": {
       "fbref": [],
       "football_data": [
@@ -89,6 +94,28 @@
         "Akhmat"
       ],
       "football_data": []
+    },
+    "Al Diriyah": {
+      "espn": [
+        "Al Diriyah"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Diriyah Club"
+      ],
+      "understat": []
+    },
+    "Al Faisaly": {
+      "espn": [
+        "Al Faisaly"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Al-Faisaly KSA FC"
+      ],
+      "understat": []
     },
     "Alaves": {
       "fbref": [],
@@ -1005,6 +1032,17 @@
         "Everton"
       ]
     },
+    "Everton CD": {
+      "espn": [
+        "Everton CD"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Everton de Viña del Mar"
+      ],
+      "understat": []
+    },
     "Excelsior": {
       "fbref": [],
       "football_data": [],
@@ -1070,6 +1108,16 @@
         "FC Schalke 04"
       ],
       "understat": []
+    },
+    "FK Crvena Zvezda": {
+      "odds_api": [
+        "Red Star Belgrade"
+      ]
+    },
+    "FK Kairat": {
+      "odds_api": [
+        "FC Kairat"
+      ]
     },
     "Fakel Voronezh": {
       "api_football": [
@@ -1168,6 +1216,11 @@
       ],
       "understat": [
         "Fulham"
+      ]
+    },
+    "GNK Dinamo Zagreb": {
+      "odds_api": [
+        "Dinamo Zagreb"
       ]
     },
     "Gazişehir Gaziantep": {
@@ -1960,6 +2013,17 @@
       ],
       "understat": []
     },
+    "Náutico": {
+      "espn": [
+        "Náutico"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Nautico PE"
+      ],
+      "understat": []
+    },
     "OB Odense BK": {
       "football_data": [
         "Odense"
@@ -2041,6 +2105,11 @@
         "Panetolikos Agrinio"
       ],
       "understat": []
+    },
+    "Paphos FC": {
+      "odds_api": [
+        "Pafos FC"
+      ]
     },
     "Paris FC": {
       "fbref": [
@@ -2473,6 +2542,9 @@
       ],
       "football_data_org": [
         "Sporting Clube de Braga"
+      ],
+      "odds_api": [
+        "SC Braga"
       ]
     },
     "Sparta Rotterdam": {
@@ -2482,15 +2554,15 @@
       "understat": []
     },
     "Sport Recife": {
+      "espn": [
+        "Sport"
+      ],
       "fbref": [],
       "football_data": [
         "Sport Recife"
       ],
       "odds_api": [],
-      "understat": [],
-      "espn": [
-        "Sport"
-      ]
+      "understat": []
     },
     "Sporting Gijón": {
       "fbref": [],
@@ -2515,12 +2587,20 @@
       ],
       "understat": []
     },
+    "St Truiden": {
+      "odds_api": [
+        "Sint Truiden"
+      ]
+    },
     "St. Gilloise": {
       "football_data": [
         "St. Gilloise"
       ],
       "football_data_org": [
         "Royale Union Saint-Gilloise"
+      ],
+      "odds_api": [
+        "Union Saint-Gilloise"
       ]
     },
     "St. Pauli": {
@@ -2707,7 +2787,9 @@
     "Twente": {
       "fbref": [],
       "football_data": [],
-      "odds_api": [],
+      "odds_api": [
+        "FC Twente Enschede"
+      ],
       "understat": []
     },
     "US Catanzaro 1929": {
@@ -2740,6 +2822,17 @@
       "fbref": [],
       "football_data": [],
       "odds_api": [],
+      "understat": []
+    },
+    "Universidad Católica": {
+      "espn": [
+        "Universidad Católica"
+      ],
+      "fbref": [],
+      "football_data": [],
+      "odds_api": [
+        "Universidad Católica (CHI)"
+      ],
       "understat": []
     },
     "Utrecht": {
@@ -3050,61 +3143,6 @@
         "Slask Wroclaw"
       ],
       "odds_api": []
-    },
-    "Al Faisaly": {
-      "football_data": [],
-      "fbref": [],
-      "understat": [],
-      "odds_api": [
-        "Al-Faisaly KSA FC"
-      ],
-      "espn": [
-        "Al Faisaly"
-      ]
-    },
-    "Al Diriyah": {
-      "football_data": [],
-      "fbref": [],
-      "understat": [],
-      "odds_api": [
-        "Diriyah Club"
-      ],
-      "espn": [
-        "Al Diriyah"
-      ]
-    },
-    "Everton CD": {
-      "football_data": [],
-      "fbref": [],
-      "understat": [],
-      "odds_api": [
-        "Everton de Viña del Mar"
-      ],
-      "espn": [
-        "Everton CD"
-      ]
-    },
-    "Universidad Católica": {
-      "football_data": [],
-      "fbref": [],
-      "understat": [],
-      "odds_api": [
-        "Universidad Católica (CHI)"
-      ],
-      "espn": [
-        "Universidad Católica"
-      ]
-    },
-    "Náutico": {
-      "football_data": [],
-      "fbref": [],
-      "understat": [],
-      "odds_api": [
-        "Nautico PE"
-      ],
-      "espn": [
-        "Náutico"
-      ]
     }
   },
   "sources": [
