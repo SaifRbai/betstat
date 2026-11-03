@@ -264,3 +264,62 @@ def test_derniers_instantanes_d_une_journee(tmp_path: Path) -> None:
     assert list(repris.columns) == list(cotes.COLONNES_COTES)
     assert cotes.derniers_instantanes("F1", fin, "2030-01-01", chemin_db=base).empty
     assert cotes.derniers_instantanes("E0", debut, fin, chemin_db=base).empty
+
+
+# -- economie de credits : calendrier gratuit avant l'appel payant ----------
+
+def _dans(heures: float):
+    from datetime import datetime, timedelta, timezone
+    return [datetime.now(timezone.utc) + timedelta(hours=heures)]
+
+
+def _api_comptee(monkeypatch: pytest.MonkeyPatch) -> dict:
+    appels = {"n": 0}
+
+    def api(*_args: object, **_kwargs: object):
+        appels["n"] += 1
+        return [EVENEMENT], 400, 100
+
+    monkeypatch.setattr(cotes, "_appeler_api", api)
+    monkeypatch.setattr(cotes, "_incrementer_compteur", lambda *a, **k: cotes.lire_compteur())
+    monkeypatch.setattr(cotes.config, "cle_api", lambda _nom: "cle")
+    return appels
+
+
+def test_force_sans_match_proche_ne_paie_pas(monkeypatch: pytest.MonkeyPatch,
+                                            tmp_path: Path) -> None:
+    monkeypatch.setattr(cotes, "_chemin_cache", lambda c: tmp_path / f"{c}.json")
+    appels = _api_comptee(monkeypatch)
+    monkeypatch.setattr(cotes, "evenements_a_venir", lambda _c: [])
+    donnees, du_cache = cotes.recuperer_brut("UEL", forcer=True)
+    assert appels["n"] == 0 and donnees == [] and du_cache
+
+    monkeypatch.setattr(cotes, "evenements_a_venir", lambda _c: _dans(24 * 5))
+    cotes.recuperer_brut("UEL", forcer=True)
+    assert appels["n"] == 0                      # a cinq jours : pas encore
+
+
+def test_force_cache_frais_loin_du_match_ne_paie_pas(monkeypatch: pytest.MonkeyPatch,
+                                                    tmp_path: Path) -> None:
+    monkeypatch.setattr(cotes, "_chemin_cache", lambda c: tmp_path / f"{c}.json")
+    (tmp_path / "F1.json").write_text(json.dumps([EVENEMENT]), encoding="utf-8")
+    appels = _api_comptee(monkeypatch)
+    monkeypatch.setattr(cotes, "age_du_cache", lambda _c: 30 * 60)
+    monkeypatch.setattr(cotes, "evenements_a_venir", lambda _c: _dans(40))
+    donnees, du_cache = cotes.recuperer_brut("F1", forcer=True)
+    assert appels["n"] == 0 and du_cache and len(donnees) == 1
+
+    monkeypatch.setattr(cotes, "evenements_a_venir", lambda _c: _dans(2))
+    _, du_cache = cotes.recuperer_brut("F1", forcer=True)
+    assert appels["n"] == 1 and not du_cache     # cloture proche : on paie
+
+
+def test_calendrier_inconnu_garde_le_comportement_d_avant(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(cotes, "_chemin_cache", lambda c: tmp_path / f"{c}.json")
+    appels = _api_comptee(monkeypatch)
+    monkeypatch.setattr(cotes, "evenements_a_venir", lambda _c: None)
+    cotes.recuperer_brut("F1", forcer=True)
+    assert appels["n"] == 1
+    cotes.recuperer_brut("F1", forcer=True, economiser=False)
+    assert appels["n"] == 2

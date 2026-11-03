@@ -218,8 +218,114 @@ def _appeler_api(sport: str, cle: str) -> tuple[list[dict], int | None, int | No
     return reponse.json(), restant_int, utilises_int
 
 
-def recuperer_brut(championnat: str, forcer: bool = False) -> tuple[list[dict], bool]:
+# --------------------------------------------------------------------------
+# Economie de credits : le calendrier gratuit avant l'appel payant
+# --------------------------------------------------------------------------
+# L'endpoint /events ne renvoie pas de cotes mais coute ZERO credit (mesure :
+# x-requests-last = 0). Il dit, gratuitement, si un championnat a un match
+# dans les jours qui viennent. Un appel de cotes sur une ligue a l'arret (treve,
+# semaine sans coupe d'Europe) paierait deux credits pour une liste vide.
+URL_EVENEMENTS = "https://api.the-odds-api.com/v4/sports/{sport}/events"
+TTL_EVENEMENTS_SECONDES = 3 * 3600
+# Au-dela, un match ne justifie pas de payer : ses cotes seront reprises plus tard.
+HORIZON_UTILE_HEURES = 72
+
+
+def _age_minimal_avant_rappel(heures_avant_match: float) -> float:
+    """Age (secondes) en dessous duquel un cache est juge assez frais.
+
+    Les cotes bougent peu a trois jours du coup d'envoi, beaucoup dans les
+    dernieres heures : payer toutes les quinze minutes un match de jeudi
+    quand on est mardi ne sert a rien.
+    """
+    if heures_avant_match <= 6:
+        return config.TTL_COTES_SECONDES          # 15 min : la cloture approche
+    if heures_avant_match <= 24:
+        return 2 * 3600
+    return 6 * 3600
+
+
+def _chemin_evenements(championnat: str) -> Path:
+    return config.DOSSIER_CACHE_COTES / f"{championnat.upper()}_evenements.json"
+
+
+def evenements_a_venir(championnat: str, ttl: int = TTL_EVENEMENTS_SECONDES
+                       ) -> list[datetime] | None:
+    """Coups d'envoi a venir d'un championnat, via l'endpoint gratuit.
+
+    Renvoie None quand on ne sait pas (pas de cle, reseau coupe, erreur) :
+    l'appelant se comporte alors comme avant, sans rien economiser.
+    """
+    info = config.COMPETITIONS.get(championnat.upper()) or {}
+    sport = info.get("odds")
+    if not sport:
+        return None
+    chemin = _chemin_evenements(championnat)
+    donnees = None
+    if chemin.exists() and time.time() - chemin.stat().st_mtime < ttl:
+        try:
+            donnees = json.loads(chemin.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            donnees = None
+    if donnees is None:
+        try:
+            reponse = requests.get(URL_EVENEMENTS.format(sport=sport),
+                                   params={"apiKey": config.cle_api("odds"),
+                                           "dateFormat": "iso"},
+                                   timeout=DELAI_RESEAU)
+            reponse.raise_for_status()
+            donnees = [e.get("commence_time") for e in reponse.json()]
+        except Exception as erreur:              # inconnu, pas bloquant
+            _journal.info("Calendrier gratuit %s indisponible : %s", championnat, erreur)
+            return None
+        config.creer_dossiers()
+        chemin.write_text(json.dumps(donnees), encoding="utf-8")
+    maintenant = datetime.now(timezone.utc)
+    dates = []
+    for brut in donnees:
+        moment = pd.to_datetime(brut, utc=True, errors="coerce")
+        if pd.notna(moment) and moment.to_pydatetime() > maintenant:
+            dates.append(moment.to_pydatetime())
+    return sorted(dates)
+
+
+def lire_evenements_en_cache(championnat: str) -> list[datetime]:
+    """Les coups d'envoi deja connus sur disque, sans aucun appel."""
+    chemin = _chemin_evenements(championnat)
+    if not chemin.exists():
+        return []
+    try:
+        donnees = json.loads(chemin.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    dates = (pd.to_datetime(b, utc=True, errors="coerce") for b in donnees)
+    return sorted(d.to_pydatetime() for d in dates if pd.notna(d))
+
+
+def motif_appel_inutile(championnat: str) -> str | None:
+    """Pourquoi un appel payant serait du gaspillage, ou None s'il est utile."""
+    dates = evenements_a_venir(championnat)
+    if dates is None:
+        return None
+    if not dates:
+        return "aucun match a venir chez le fournisseur"
+    heures = (dates[0] - datetime.now(timezone.utc)).total_seconds() / 3600
+    if heures > HORIZON_UTILE_HEURES:
+        return f"prochain match dans {heures / 24:.1f} jours"
+    age = age_du_cache(championnat)
+    if age is not None and age < _age_minimal_avant_rappel(heures):
+        return (f"cache de {age / 60:.0f} min encore frais, prochain match "
+                f"dans {heures:.0f} h")
+    return None
+
+
+def recuperer_brut(championnat: str, forcer: bool = False,
+                   economiser: bool = True) -> tuple[list[dict], bool]:
     """JSON brut de l'API, depuis le cache si celui-ci a moins de 15 minutes.
+
+    Avec `economiser` (par defaut), meme un rafraichissement force consulte
+    d'abord le calendrier gratuit, et ne paie pas si aucun match n'approche
+    ou si le cache est encore frais au regard du prochain coup d'envoi.
 
     Renvoie (donnees, provient_du_cache).
     """
@@ -237,6 +343,14 @@ def recuperer_brut(championnat: str, forcer: bool = False) -> tuple[list[dict], 
         _journal.info("Cotes %s reprises du cache (moins de 15 min, 0 requete consommee).",
                       championnat)
         return json.loads(chemin.read_text(encoding="utf-8")), True
+
+    if economiser:
+        motif = motif_appel_inutile(championnat)
+        if motif:
+            _journal.info("Cotes %s non payees (%s) : 0 credit.", championnat, motif)
+            if chemin.exists():
+                return json.loads(chemin.read_text(encoding="utf-8")), True
+            return [], True
 
     etat = lire_compteur()
     if credits_consommes(etat) + COUT_CREDITS_PAR_APPEL > config.QUOTA_MENSUEL_ODDS_API:

@@ -931,3 +931,61 @@ def test_les_resultats_d_une_coupe_ne_sont_pas_cherches_chez_football_data(monke
         raise AssertionError("football-data.co.uk ne publie aucune coupe")
     monkeypatch.setattr(web.resultats_module, "charger", interdit)
     assert web._Resultats()._ligue("FAC") == {}
+
+
+# --------------------------------------------------------------------------
+# Pronos surs
+# --------------------------------------------------------------------------
+
+def test_les_pronos_surs_portent_leur_taux_annonce_et_mesure(bouchons, monkeypatch):
+    """Un prono par match, son taux annonce, et la mesure du meme type au meme niveau."""
+    choix = {"marche": "double chance", "selection": "1N", "libelle": "Paris SG ou nul",
+             "p_modele": 0.81, "p_marche": 0.80, "p_finale": 0.805, "cote": 1.22,
+             "echoue_1_fois_sur": 5.1}
+    monkeypatch.setattr(web, "ligues_du_jour", lambda jour: ["F1"])
+    monkeypatch.setattr(web, "affiches", lambda code, jour=None: ([
+        {"date": f"{JOUR_DEMAIN}T18:45:00Z", "dom": "Paris SG", "ext": "Marseille",
+         "statut": "a_venir", "choix_sur": {"choix": choix, "sur": True, "reserves": []}},
+        {"date": f"{JOUR_DEMAIN}T20:45:00Z", "dom": "Lens", "ext": "Lille",
+         "statut": "a_venir", "choix_sur": {"choix": None, "sur": False, "reserves": []}},
+    ], [], 1.0))
+    table = {"familles": {"double chance": {"0.8": [200, 162]}}}
+    monkeypatch.setattr(web.reussite_module, "en_cache",
+                        lambda c: table if c == "F1" else None)
+    monkeypatch.setattr(web, "_lancer_mesures", lambda codes: [])
+    r = web.pronos_surs(JOUR_DEMAIN)
+    assert r["sans_choix"] == 1 and len(r["pronos"]) == 1
+    p = r["pronos"][0]
+    assert p["probabilite"] == 0.805 and p["cote_reelle"] is True
+    assert p["mesure"]["portee"] == "ligue" and p["mesure"]["nombre"] == 200
+    assert abs(p["mesure"]["taux"] - 0.81) < 1e-9
+
+
+def test_un_prono_sur_joue_recoit_son_verdict(bouchons, monkeypatch):
+    choix = {"marche": "1N2", "selection": "1", "libelle": "Victoire Paris SG",
+             "p_modele": 0.7, "p_marche": None, "p_finale": 0.7, "cote": 1.4,
+             "echoue_1_fois_sur": 3.3}
+    monkeypatch.setattr(web, "ligues_du_jour", lambda jour: ["F1"])
+    monkeypatch.setattr(web, "affiches", lambda code, jour=None: ([
+        {"date": HORODATAGE_PASSE, "dom": "Paris SG", "ext": "Marseille",
+         "statut": "termine", "resultat": {"buts_dom": 0, "buts_ext": 1},
+         "choix_sur": {"choix": choix, "sur": True, "reserves": []}}], [], 1.0))
+    monkeypatch.setattr(web.reussite_module, "en_cache", lambda c: None)
+    monkeypatch.setattr(web, "_lancer_mesures", lambda codes: ["F1"])
+    r = web.pronos_surs(JOUR_AUJOURDHUI)
+    assert r["pronos"][0]["verdict"] == "rate"
+    assert r["bilan"]["rate"] == 1 and r["mesures_en_cours"] == ["F1"]
+    assert r["pronos"][0]["mesure"] is None
+
+
+def test_un_match_present_sous_deux_orthographes_n_apparait_qu_une_fois(bouchons, monkeypatch):
+    """L'historique des cotes garde un nom brut que le cache a canonise depuis."""
+    deux = pd.DataFrame({
+        "date": [f"{JOUR_DEMAIN}T18:45:00Z", f"{JOUR_DEMAIN}T18:45:00Z"],
+        "dom": ["Paris SG", "Paris Saint-Germain"], "ext": ["Marseille", "Marseille"],
+        "bookmaker": ["b1", "b1"]})
+    monkeypatch.setattr(web.cotes_module, "lire_cache", lambda c: (deux, 12.0))
+    monkeypatch.setattr(web.noms_module, "resoudre_vers",
+                        lambda nom, equipes: "Paris SG" if "Paris" in nom else nom)
+    matchs, _, _ = web.affiches("F1")
+    assert len(matchs) == 1

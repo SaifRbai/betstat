@@ -493,6 +493,16 @@
     transform: translateY(-2px); border-left-color: var(--jauge-plein);
     box-shadow: 0 4px 14px rgba(0,0,0,.08);
   }
+  /* Pronos surs : deux taux cote a cote, l'annonce et la mesure. */
+  .sur-carte .taux { display: flex; gap: 14px; margin: 6px 0 4px; }
+  .sur-carte .taux div { flex: 1; }
+  .sur-carte .taux b { display: block; font-size: 19px; color: var(--encre); }
+  .sur-carte .taux small { font-size: 11px; color: var(--doux); }
+  .sur-carte .barre { height: 4px; border-radius: 2px; background: var(--trait);
+    overflow: hidden; margin-top: 3px; }
+  .sur-carte .barre i { display: block; height: 100%; background: var(--accent); }
+  .sur-carte .barre.mesure i { background: var(--jauge-plein); }
+  .sur-carte .bas + .bas { margin-top: 2px; }
   /* Squelette : pendant un recalcul, la forme du resultat reste a l'ecran.
      Un « Calcul... » qui vide le panneau fait sauter la page a chaque cran du
      curseur, et on perd de vue ce qu'on etait en train de comparer. */
@@ -600,6 +610,8 @@
         Combine du jour <span class="pastille" id="n-combine"></span></button>
       <button class="onglet" role="tab" data-vue="fortes" aria-selected="false">
         Equipes fortes <span class="pastille" id="n-fortes"></span></button>
+      <button class="onglet" role="tab" data-vue="surs" aria-selected="false">
+        Pronos surs <span class="pastille" id="n-surs"></span></button>
       <button class="onglet" role="tab" data-vue="apis" aria-selected="false">
         Cles API</button>
     </div>
@@ -753,6 +765,24 @@
   </section>
     <p class="vue-vide">Ouvre cet onglet apres avoir choisi un jour : les favoris
       et les combines prets s'affichent ici.</p>
+  </div>
+
+  <div class="vue" data-vue="surs">
+  <section id="section-surs" data-principale hidden>
+    <h2>Pronos surs <span class="compte" id="compte-surs"></span></h2>
+    <!-- Deux taux a ne pas confondre : ce que le modele annonce pour CE match,
+         et ce que les pronos du meme type, au meme niveau, ont reellement donne. -->
+    <p class="note" style="margin: -6px 2px 10px;">
+      Pour chaque match, la facon de le jouer qui a le plus de chances de passer.
+      <strong>Taux annonce</strong> : la probabilite estimee pour ce match.
+      <strong>Taux mesure</strong> : sur les saisons passees, la part des pronos du
+      meme type, annonces au meme niveau, qui sont <strong>reellement passes</strong>.
+      « Sur » ne veut pas dire gagnant a coup sur, ni rentable.
+    </p>
+    <div id="surs-panneau" class="panneau"></div>
+  </section>
+    <p class="vue-vide">Ouvre cet onglet apres avoir choisi un jour : le prono le
+      plus sur de chaque match et son taux de reussite s'affichent ici.</p>
   </div>
 
   <div class="vue" data-vue="apis">
@@ -2425,6 +2455,105 @@ async function afficherApis() {
 // jour — le cache des cotes — donc aucun credit API consomme.
 let jetonFortes = 0;
 
+// --- Pronos surs ---------------------------------------------------------
+let jetonSurs = 0;
+let minuterieSurs = null;
+
+function libelleMesure(m) {
+  if (!m) return null;
+  const portee = m.portee === "ligue" ? "dans cette ligue" : "toutes ligues confondues";
+  return `${m.passes} sur ${m.nombre} pronos du meme type annonces entre `
+    + `${Math.round(m.tranche[0] * 100)} et ${Math.round(m.tranche[1] * 100)} % `
+    + `sont passes, ${portee}`;
+}
+
+function carteSure(p, index, enCours) {
+  const heure = new Date(p.date).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const mesure = p.mesure
+    ? `<b>${pourcent(p.mesure.taux)}</b><div class="barre mesure"><i style="width:${
+        (p.mesure.taux * 100).toFixed(1)}%"></i></div>`
+    : `<b>—</b><small>${enCours ? "calcul en cours..." : "historique insuffisant"}</small>`;
+  const cote = p.cote_reelle
+    ? `<span>meilleure cote</span><span class="prix">${p.cote.toFixed(2)}</span>`
+    : `<span>cote equitable du modele, aucun bookmaker</span><span class="prix">${p.cote.toFixed(2)}</span>`;
+  const score = p.resultat ? ` — ${p.resultat.buts_dom}-${p.resultat.buts_ext}`
+    : p.direct ? ` — en cours ${p.direct.buts_dom}-${p.direct.buts_ext}` : "";
+  return `
+    <div class="jambe-carte sur-carte" style="--i:${Math.min(index, 20)}">
+      <div class="duo"><span class="ligue">${p.ligue}</span>${p.dom} - ${p.ext}</div>
+      <div class="choix">${p.libelle} ${pastilleVerdict(p.verdict)}</div>
+      <div class="taux">
+        <div><small>taux annonce</small><b>${pourcent(p.probabilite)}</b>
+          <div class="barre"><i style="width:${(p.probabilite * 100).toFixed(1)}%"></i></div></div>
+        <div title="${libelleMesure(p.mesure) || ""}"><small>taux mesure</small>${mesure}</div>
+      </div>
+      <div class="bas">${cote}</div>
+      <div class="bas"><span>${libelleJour(p.date)} ${heure}${score}</span>
+        <span>rate 1 fois sur ${p.echoue_1_fois_sur.toFixed(1)}</span></div>
+      ${p.mesure ? `<div class="bas"><span>${libelleMesure(p.mesure)}</span></div>` : ""}
+      ${p.reserves.length ? `<div class="bas"><span>reserve : ${p.reserves[0]}</span></div>` : ""}
+    </div>`;
+}
+
+async function afficherPronosSurs() {
+  const section = $("section-surs");
+  const bloc = $("surs-panneau");
+  const jour = jourDuCombine();
+  const jeton = ++jetonSurs;
+  clearTimeout(minuterieSurs);
+  section.hidden = false;
+  if (bloc.firstElementChild) bloc.classList.add("squelette");
+  else bloc.innerHTML = '<div class="note squelette">Calcul... (la premiere fois, '
+    + 'chaque ligue du jour doit etre entrainee)</div>';
+  try {
+    const reponse = await fetch(`/api/pronos-surs?jour=${encodeURIComponent(jour)}`);
+    const f = await reponse.json();
+    if (jeton !== jetonSurs) return;
+    bloc.classList.remove("squelette");
+    if (f.erreur) {
+      bloc.innerHTML = `<div class="verdict mauvais">${f.erreur}</div>`;
+      $("compte-surs").textContent = "";
+      pastille("n-surs", 0);
+      return;
+    }
+    const enCours = f.mesures_en_cours.length > 0;
+    $("compte-surs").textContent = `— ${f.pronos.length} match(s), `
+      + libelleJour(f.jour + "T12:00:00").toLowerCase();
+    pastille("n-surs", f.pronos.length);
+    const b = f.bilan;
+    const bilan = b.verifiables
+      ? `<div class="note"><strong>Deja joues : ${b.juste} passe(s) sur ${b.verifiables}</strong>
+           (${pourcent(b.juste / b.verifiables)}). Un echantillon d'une journee ne
+           mesure rien : c'est le taux mesure qui compte.</div>` : "";
+    const rates = f.ligues.filter((l) => l.erreur);
+    bloc.innerHTML = `
+      ${bilan}
+      ${enCours ? `<div class="note squelette">Taux mesures en cours de calcul pour
+        ${f.mesures_en_cours.join(", ")} — mise a jour automatique.</div>` : ""}
+      ${f.pronos.length
+        ? `<div class="jambes-grille">${f.pronos.map((p, i) => carteSure(p, i, enCours)).join("")}</div>`
+        : `<div class="note">Aucun match ce jour-la n'a de prono a plus de ${pourcent(f.seuil)}.</div>`}
+      <div class="note">
+        Retenu par match : le pari le plus probable parmi 1N2, double chance et
+        plus/moins 2.5 buts, a une cote d'au moins ${f.cote_minimale.toFixed(2)} et
+        une probabilite d'au moins ${pourcent(f.seuil)}. ${f.sans_choix
+          ? `${f.sans_choix} match(s) sans prono assez sur ne sont pas affiches. ` : ""}
+        Le taux mesure exige ${f.min_pronos_mesure} pronos comparables au moins.
+        Aucun credit API consomme.
+        ${rates.length ? `<br>Ligues en echec : ${rates.map((l) => l.code + " (" + l.erreur + ")").join(" ; ")}` : ""}
+      </div>`;
+    if (enCours && !STATIQUE) {
+      minuterieSurs = setTimeout(() => {
+        if (document.querySelector('.vue.active')?.dataset.vue === "surs") afficherPronosSurs();
+      }, 20000);
+    }
+  } catch (souci) {
+    if (jeton !== jetonSurs) return;
+    bloc.classList.remove("squelette");
+    bloc.innerHTML = `<div class="verdict mauvais">Serveur injoignable : ${souci.message}</div>`;
+  }
+}
+
 function carteFavori(j, index) {
   return `
     <div class="jambe-carte" style="--i:${index}">
@@ -2619,6 +2748,7 @@ async function demarrer() {
     onglet.addEventListener("click", () => {
       montrerVue(onglet.dataset.vue);
       if (onglet.dataset.vue === "fortes") afficherEquipesFortes();
+      if (onglet.dataset.vue === "surs") afficherPronosSurs();
     });
   }
   // L'ombre n'apparait qu'une fois la barre decollee du haut : elle signale
@@ -2646,7 +2776,9 @@ async function demarrer() {
   }
   // Changer de jour depuis l'onglet ouvert : la liste doit suivre.
   $("jour").addEventListener("change", () => {
-    if (document.querySelector('.vue.active')?.dataset.vue === "fortes") afficherEquipesFortes();
+    const active = document.querySelector('.vue.active')?.dataset.vue;
+    if (active === "fortes") afficherEquipesFortes();
+    if (active === "surs") afficherPronosSurs();
   });
   $("bankroll").addEventListener("change", () => CHOISIES.size && calculerCombine());
   afficherApis();

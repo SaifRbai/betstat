@@ -71,7 +71,9 @@ def rafraichir(credits: int) -> list[str]:
     caches les plus vieux. Une ligue en echec ne coute rien de plus et
     n'arrete pas les autres.
     """
-    avec_api = [c for c, info in config.CHAMPIONNATS.items() if info.get("odds")]
+    avec_api = [c for c, info in config.COMPETITIONS.items() if info.get("odds")]
+    for code in avec_api:                         # calendriers gratuits, 0 credit
+        cotes_module.evenements_a_venir(code)
     du_jour = set(web.ligues_du_jour(web.aujourdhui()))
 
     def priorite(code: str) -> tuple:
@@ -82,6 +84,12 @@ def rafraichir(credits: int) -> list[str]:
     for code in sorted(avec_api, key=priorite):
         if credits < CREDITS_PAR_LIGUE:
             break
+        # Calendrier gratuit d'abord : une ligue sans match proche ou au cache
+        # encore frais ne prend pas la place d'une ligue qui joue.
+        motif = cotes_module.motif_appel_inutile(code)
+        if motif:
+            _journal.info("Cotes %s sautees (%s), 0 credit.", code, motif)
+            continue
         try:
             cotes_module.recuperer(code, forcer=True)
             faites.append(code)
@@ -158,6 +166,10 @@ def publier(sortie: Path, credits: int) -> dict:
         jours = jours_a_publier(etats)
         for jour in [""] + jours:
             photo.prendre("/api/equipes-fortes", mise=MISE, jour=jour)
+            # Les taux mesures d'abord, dans ce processus : en ligne, personne
+            # ne reviendra chercher ceux qu'un calcul d'arriere-plan finirait.
+            web.pronos_surs(jour or None, attendre=True)
+            photo.prendre("/api/pronos-surs", jour=jour)
             for cible in CIBLES:
                 photo.prendre("/api/combine-du-jour", cible=cible, mise=MISE,
                               jour=jour, etendus=0)

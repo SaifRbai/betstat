@@ -53,6 +53,7 @@ from paris import confiance as confiance_module
 from paris import journal as journal_module
 from paris import performance as performance_module
 from paris import quotidien as quotidien_module
+from paris import reussite as reussite_module
 from paris import valeur as valeur_module
 from paris import verdict as verdict_module
 
@@ -676,6 +677,7 @@ def affiches(championnat: str,
     sans_cotes = config.sans_cotes(championnat)
     a_venir = (_calendrier_sans_cotes(championnat, jour) if sans_cotes
                else cotes_module.matchs_a_venir(cotes))
+    vus: set[tuple] = set()
     for ligne in a_venir.itertuples():
         if jour is not None and _jour_local(ligne.date) != jour:
             continue
@@ -704,6 +706,12 @@ def affiches(championnat: str,
                 "inconnues": [n for n, r in ((ligne.dom, dom), (ligne.ext, ext))
                               if r is None]})
             continue
+        # L'historique des cotes garde le nom brut d'avant un alias ajoute depuis
+        # (« Bodø/Glimt » puis « Bodo/Glimt ») : resolus, c'est le meme match.
+        cle = (pd.Timestamp(ligne.date), dom, ext)
+        if cle in vus:
+            continue
+        vus.add(cle)
         p = modele_du_match.predire(dom, ext)
         detail = cotes_module.par_bookmaker(cotes, ligne.date, ligne.dom, ligne.ext)
         peu_de_donnees = [
@@ -949,6 +957,11 @@ def ligues_du_jour(jour: str) -> list[str]:
         cotes, _ = cotes_module.lire_cache(code)
         cotes = _cotes_a_venir(cotes)
         if not cotes.empty and (cotes["date"].map(_jour_local) == jour).any():
+            codes.append(code)
+        elif any(_jour_local(d) == jour
+                 for d in cotes_module.lire_evenements_en_cache(code)):
+            # Calendrier gratuit deja sur disque : une ligue sans cache de
+            # cotes (Europa, Conference) est quand meme reconnue ce jour-la.
             codes.append(code)
         elif not _avec_matchs_commences(code, cotes.iloc[0:0], jour).empty:
             codes.append(code)                        # tous deja commences
@@ -1443,6 +1456,146 @@ def equipes_fortes(jour: str | None = None, mise: float = 10.0) -> dict:
     }
 
 
+# --------------------------------------------------------------------------
+# Pronos surs : le prono le plus sur de chaque match, et son taux mesure
+# --------------------------------------------------------------------------
+
+_MESURES_EN_COURS: set[str] = set()
+_VERROU_MESURES = threading.Lock()
+
+
+def _lancer_mesures(codes: list[str]) -> list[str]:
+    """Calcule en arriere-plan les taux de reussite manquants. Renvoie ceux en cours.
+
+    Une mesure coute de 5 a 25 secondes par championnat : la faire pendant la
+    requete bloquerait la page une minute. La page redemande un peu plus tard.
+    """
+    with _VERROU_MESURES:
+        a_faire = [c for c in dict.fromkeys(codes)
+                   if c in config.CHAMPIONNATS and c not in _MESURES_EN_COURS
+                   and reussite_module.en_cache(c) is None]
+        _MESURES_EN_COURS.update(a_faire)
+        en_cours = sorted(_MESURES_EN_COURS)
+    if a_faire:
+        def travail() -> None:
+            for code in a_faire:
+                try:
+                    reussite_module.mesurer(code, SAISONS)
+                except Exception as erreur:          # une ligue muette, pas les autres
+                    _journal.warning("Taux de reussite %s non mesure : %s", code, erreur)
+                finally:
+                    with _VERROU_MESURES:
+                        _MESURES_EN_COURS.discard(code)
+        threading.Thread(target=travail, daemon=True, name="mesure-reussite").start()
+    return en_cours
+
+
+def _choix_sans_cotes(code: str, match: dict) -> dict | None:
+    """Le choix le plus sur d'un match sans bookmaker, aux cotes equitables du modele.
+
+    Meme regle que pour les ligues cotees (cote d'au moins 1.20, probabilite
+    d'au moins 60 %), mais le prix est 1/p : ce n'est pas un prix jouable, et
+    la page le dit.
+    """
+    _, modele = CACHE.modele(code)
+    p = modele.predire(match["dom"], match["ext"])
+    issues, totaux = p.get("1N2") or {}, p.get("totaux") or {}
+    equitables = {cle: 1.0 / v for cle, v in (
+        ("1", issues.get("1")), ("N", issues.get("N")), ("2", issues.get("2")),
+        ("plus", totaux.get("plus_2.5")), ("moins", totaux.get("moins_2.5")))
+        if v and v > 0}
+    return confiance_module.choix_le_plus_sur(p, match["dom"], match["ext"], {}, equitables)
+
+
+def pronos_surs(jour: str | None = None, attendre: bool = False) -> dict:
+    """Pour chaque match d'une journee : le prono le plus sur et son taux de reussite.
+
+    Deux taux, a ne pas confondre :
+      - `probabilite` : ce que le modele (melange au marche s'il y a des cotes)
+        annonce pour CE match ;
+      - `mesure` : la part des pronos du meme type, annonces dans la meme
+        tranche de dix points, qui sont reellement passes sur les saisons
+        passees (walk-forward, sans voir le futur).
+    `attendre` calcule les mesures manquantes avant de repondre (publication) ;
+    sinon elles partent en arriere-plan et `mesures_en_cours` les nomme.
+    Cache uniquement : aucun credit The Odds API.
+    """
+    jour = jour or aujourdhui()
+    codes = ligues_du_jour(jour)
+    if attendre:
+        for code in codes:
+            if code in config.CHAMPIONNATS and reussite_module.en_cache(code) is None:
+                try:
+                    reussite_module.mesurer(code, SAISONS)
+                except Exception as erreur:
+                    _journal.warning("Taux de reussite %s non mesure : %s", code, erreur)
+        en_cours: list[str] = []
+    else:
+        en_cours = _lancer_mesures(codes)
+    tables = {c: reussite_module.en_cache(c) for c in config.CHAMPIONNATS}
+    toutes = [t for t in tables.values() if t]
+
+    lignes: list[dict] = []
+    sans_choix = 0
+    ligues: list[dict] = []
+    for code in codes:
+        try:
+            matchs, _, _ = affiches(code, jour=jour)
+        except Exception as erreur:                   # une ligue muette, pas la page
+            ligues.append({"code": code, "nom": config.nom_championnat(code),
+                           "erreur": _message_erreur(erreur)})
+            continue
+        ligues.append({"code": code, "nom": config.nom_championnat(code), "erreur": None})
+        sans_cotes = config.sans_cotes(code)
+        for match in matchs:
+            try:
+                sur = _choix_sans_cotes(code, match) if sans_cotes else match.get("choix_sur")
+            except Exception as erreur:
+                _journal.info("Choix sur %s indisponible : %s", code, erreur)
+                sur = None
+            choix = (sur or {}).get("choix")
+            if not choix:
+                sans_choix += 1
+                continue
+            resultat = match.get("resultat")
+            verdict = (verdict_module.verifier(choix["marche"], choix["selection"], resultat)
+                       if resultat else None)
+            lignes.append({
+                "ligue": code, "nom_ligue": config.nom_championnat(code),
+                "date": match["date"], "dom": match["dom"], "ext": match["ext"],
+                "statut": match.get("statut"), "resultat": resultat,
+                "direct": match.get("direct"),
+                "libelle": choix["libelle"], "marche": choix["marche"],
+                "selection": choix["selection"],
+                "probabilite": choix["p_finale"], "p_modele": choix["p_modele"],
+                "p_marche": choix.get("p_marche"),
+                "cote": choix["cote"], "cote_reelle": not sans_cotes,
+                "echoue_1_fois_sur": choix["echoue_1_fois_sur"],
+                "sans_reserve": bool(sur.get("sur")),
+                "reserves": sur.get("reserves", []),
+                # La tranche est celle du taux AFFICHE : comparer un prono annonce
+                # a 80 % aux pronos de la tranche 70-80 % serait incomprehensible.
+                "mesure": reussite_module.taux(choix["marche"], choix["p_finale"],
+                                               tables.get(code), toutes),
+                "verdict": verdict,
+            })
+
+    lignes.sort(key=lambda l: l["probabilite"], reverse=True)
+    verdicts = [l["verdict"] for l in lignes if l["verdict"]]
+    return {
+        "jour": jour,
+        "pronos": lignes,
+        "sans_choix": sans_choix,
+        "ligues": ligues,
+        "bilan": verdict_module.bilan(verdicts),
+        "mesures_en_cours": en_cours,
+        "seuil": confiance_module.SEUIL_CHOIX_SUR,
+        "cote_minimale": confiance_module.COTE_MINIMALE_SURE,
+        "min_pronos_mesure": reussite_module.MIN_PRONOS_MESURE,
+        "genere": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+    }
+
+
 def championnats() -> list[dict]:
     """Les championnats, avec l'age de leurs cotes en cache.
 
@@ -1561,6 +1714,16 @@ class Gestionnaire(BaseHTTPRequestHandler):
                 return
             try:
                 self._json(200, equipes_fortes(jour, mise))
+            except Exception as souci:            # jamais une connexion coupee
+                _journal.warning("%s : %s", type(souci).__name__, souci)
+                self._json(500, {"erreur": _message_erreur(souci)})
+        elif route.path == "/api/pronos-surs":
+            jour, erreur = _jour_demande(parse_qs(route.query))
+            if erreur:
+                self._json(400, {"erreur": erreur})
+                return
+            try:
+                self._json(200, pronos_surs(jour))
             except Exception as souci:            # jamais une connexion coupee
                 _journal.warning("%s : %s", type(souci).__name__, souci)
                 self._json(500, {"erreur": _message_erreur(souci)})
