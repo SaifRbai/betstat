@@ -173,3 +173,70 @@ def charger(nb_saisons: int, equipes_connues: Iterable[str],
     if not morceaux:
         return pd.DataFrame(columns=list(resultats_module.COLONNES_NORMALISEES))
     return pd.concat(morceaux, ignore_index=True).sort_values("date").reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------
+# Ligue Europa et Ligue Conference, via ESPN (gratuit, sans cle)
+# --------------------------------------------------------------------------
+# football-data.org les reserve aux plans payants ; ESPN les publie librement.
+# Elles sont precieuses pour le modele europeen : ce sont elles qui opposent
+# les clubs grecs, polonais, suedois ou suisses a ceux des grands
+# championnats, bien plus souvent que la Ligue des champions.
+COUPES_ESPN = {"UEL": "uefa.europa", "UECL": "uefa.europa.conf"}
+# Le score ESPN d'un match prolonge inclut la prolongation : on l'ecarte
+# plutot que de modeliser un match de 120 minutes comme un match de 90.
+STATUTS_PROLONGES = {"STATUS_FINAL_AET", "STATUS_FINAL_PEN"}
+
+
+def _saison_de(jour: pd.Timestamp) -> int:
+    return jour.year if jour.month >= 7 else jour.year - 1
+
+
+def charger_coupes_espn(nb_saisons: int, equipes_connues: Iterable[str],
+                        aujourdhui: date | None = None) -> pd.DataFrame:
+    """Matchs termines de Ligue Europa et Conference, aux colonnes du projet.
+
+    Ne leve jamais d'exception reseau : une annee injoignable et sans cache
+    est simplement absente.
+    """
+    from data import espn as espn_module
+
+    connues = sorted(set(equipes_connues))
+    retenues = set(saisons(nb_saisons, aujourdhui))
+    annees = range(min(retenues), max(retenues) + 2)
+    lignes = []
+    for code, identifiant in COUPES_ESPN.items():
+        for annee in annees:
+            try:
+                brut_annee = espn_module.evenements(code, annee, identifiant=identifiant)
+            except Exception as erreur:              # reseau, format
+                _journal.warning("%s %s non charge depuis ESPN (%s).", code, annee, erreur)
+                continue
+            for evenement in brut_annee:
+                statut = (evenement.get("status") or {}).get("type") or {}
+                if statut.get("name") in STATUTS_PROLONGES:
+                    continue
+                match = espn_module._match(evenement)
+                if not match or not match["termine"] or None in (
+                        match["buts_dom"], match["buts_ext"]):
+                    continue
+                jour = pd.Timestamp(match["coup_envoi"]).tz_convert(None).normalize()
+                saison = _saison_de(jour)
+                if saison not in retenues:
+                    continue
+                dom = noms_module.resoudre_vers(match["dom"], connues) or match["dom"]
+                ext = noms_module.resoudre_vers(match["ext"], connues) or match["ext"]
+                bd, be = match["buts_dom"], match["buts_ext"]
+                lignes.append({
+                    "date": jour, "saison": f"{saison % 100:02d}{(saison + 1) % 100:02d}",
+                    "championnat": code, "dom": dom, "ext": ext,
+                    "buts_dom": float(bd), "buts_ext": float(be),
+                    "resultat": "H" if bd > be else "A" if bd < be else "D",
+                    "buts_dom_mt": None, "buts_ext_mt": None,
+                })
+    sortie = pd.DataFrame(lignes).reindex(columns=list(resultats_module.COLONNES_NORMALISEES))
+    if sortie.empty:
+        return sortie
+    sortie["total_buts"] = sortie["buts_dom"] + sortie["buts_ext"]
+    sortie = sortie.drop_duplicates(subset=["date", "dom", "ext"])
+    return sortie.sort_values("date").reset_index(drop=True)

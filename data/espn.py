@@ -68,15 +68,17 @@ def _appeler(identifiant: str, annee: int) -> list[dict]:
     return evenements
 
 
-def evenements(ligue: str, annee: int, ttl: float | None = None) -> list[dict]:
+def evenements(ligue: str, annee: int, ttl: float | None = None,
+               identifiant: str | None = None) -> list[dict]:
     """Tous les matchs ESPN d'une annee civile, depuis le cache si possible.
 
     Une annee passee ne change plus : son cache ne perime jamais. L'annee en
     cours (et la suivante, deja programmee en decembre) vit `ttl` secondes.
     En cas d'echec reseau, le dernier cache est rendu tel quel ; sans cache,
-    l'erreur remonte a l'appelant.
+    l'erreur remonte a l'appelant. `identifiant` sert aux competitions qui ne
+    sont pas des championnats (coupes d'Europe : "uefa.europa").
     """
-    identifiant = slug(ligue)
+    identifiant = identifiant or slug(ligue)
     if identifiant is None:
         raise ValueError(f"Pas d'identifiant ESPN pour {ligue}.")
     config.creer_dossiers()

@@ -58,6 +58,9 @@
       "understat": []
     },
     "AGF Aarhus": {
+      "espn": [
+        "AGF"
+      ],
       "football_data": [
         "Aarhus"
       ],
@@ -84,6 +87,9 @@
       ]
     },
     "Ajax": {
+      "espn": [
+        "Ajax Amsterdam"
+      ],
       "fbref": [],
       "football_data": [],
       "odds_api": [],
@@ -383,10 +389,16 @@
     "Barcelona": {
       "fbref": [],
       "football_data": [],
+      "football_data_org": [
+        "FC Barcelona"
+      ],
       "odds_api": [],
       "understat": []
     },
     "Basaksehir": {
+      "espn": [
+        "Istanbul Basaksehir"
+      ],
       "fbref": [],
       "football_data": [
         "Buyuksehyr"
@@ -498,6 +510,11 @@
         "Bolton Wanderers"
       ],
       "understat": []
+    },
+    "Borac Banja Luka": {
+      "odds_api": [
+        "FK Borac Banja Luka"
+      ]
     },
     "Bordeaux": {
       "fbref": [
@@ -666,6 +683,11 @@
       "football_data": [],
       "odds_api": [],
       "understat": []
+    },
+    "CSKA Sofia": {
+      "odds_api": [
+        "PFC CSKA Sofia"
+      ]
     },
     "Cadiz": {
       "fbref": [],
@@ -961,6 +983,11 @@
       ],
       "understat": []
     },
+    "Egnatia": {
+      "odds_api": [
+        "KF Egnatia"
+      ]
+    },
     "Eintracht Braunschweig": {
       "fbref": [],
       "football_data": [
@@ -1070,6 +1097,9 @@
       "understat": []
     },
     "FC Copenhagen": {
+      "espn": [
+        "F.C. København"
+      ],
       "football_data": [
         "FC Copenhagen"
       ],
@@ -1088,6 +1118,9 @@
       "understat": []
     },
     "FC Lausanne-Sport": {
+      "espn": [
+        "Lausanne Sports"
+      ],
       "football_data": [
         "Lausanne"
       ],
@@ -1115,8 +1148,16 @@
       ]
     },
     "FK Kairat": {
+      "espn": [
+        "Kairat Almaty"
+      ],
       "odds_api": [
         "FC Kairat"
+      ]
+    },
+    "FK Shakhtar Donetsk": {
+      "espn": [
+        "Shakhtar Donetsk"
       ]
     },
     "Fakel Voronezh": {
@@ -1135,7 +1176,15 @@
       ],
       "understat": []
     },
+    "Ferencvaros": {
+      "odds_api": [
+        "Ferencváros TC"
+      ]
+    },
     "Feyenoord": {
+      "espn": [
+        "Feyenoord Rotterdam"
+      ],
       "fbref": [],
       "football_data": [],
       "odds_api": [],
@@ -1239,11 +1288,21 @@
       ],
       "odds_api": []
     },
+    "Genk": {
+      "espn": [
+        "Racing Genk"
+      ]
+    },
     "Genoa": {
       "fbref": [],
       "football_data": [],
       "odds_api": [],
       "understat": []
+    },
+    "Gent": {
+      "espn": [
+        "KAA Gent"
+      ]
     },
     "Getafe": {
       "fbref": [],
@@ -1352,6 +1411,11 @@
       ],
       "understat": []
     },
+    "Hapoel Be'er": {
+      "odds_api": [
+        "Hapoel Be'er Sheva"
+      ]
+    },
     "Hearts": {
       "api_football": [
         "Heart Of Midlothian"
@@ -1365,6 +1429,9 @@
       "understat": []
     },
     "Heidenheim": {
+      "espn": [
+        "1. FC Heidenheim 1846"
+      ],
       "fbref": [],
       "football_data": [],
       "odds_api": [],
@@ -1501,7 +1568,15 @@
       ],
       "odds_api": []
     },
+    "Jablonec": {
+      "odds_api": [
+        "FK Jablonec"
+      ]
+    },
     "Jagiellonia Białystok": {
+      "espn": [
+        "Jagiellonia Bialystok"
+      ],
       "football_data": [
         "Jagiellonia"
       ],
@@ -1552,6 +1627,11 @@
         "Karlsruher SC"
       ],
       "understat": []
+    },
+    "Kauno Zalgiris": {
+      "odds_api": [
+        "FK Kauno Žalgiris"
+      ]
     },
     "Krasnodar": {
       "api_football": [
@@ -1649,6 +1729,11 @@
       "odds_api": [],
       "understat": []
     },
+    "Legia": {
+      "espn": [
+        "Legia Warsaw"
+      ]
+    },
     "Leicester City": {
       "fbref": [
         "Leicester City"
@@ -1692,6 +1777,11 @@
       "football_data": [],
       "odds_api": [],
       "understat": []
+    },
+    "Levski Sofia": {
+      "odds_api": [
+        "PFC Levski Sofia"
+      ]
     },
     "Lille": {
       "fbref": [
@@ -1973,6 +2063,11 @@
         "Nice"
       ]
     },
+    "Nordsjaelland": {
+      "espn": [
+        "FC Nordsjælland"
+      ]
+    },
     "Norwich City": {
       "fbref": [
         "Norwich City"
@@ -2031,6 +2126,9 @@
       "odds_api": []
     },
     "Olympiakos Piraeus": {
+      "espn": [
+        "Olympiacos"
+      ],
       "fbref": [],
       "football_data": [
         "Olympiakos"
@@ -2039,6 +2137,11 @@
         "Olympiakos Piraeus"
       ],
       "understat": []
+    },
+    "Omonia Nicosia": {
+      "odds_api": [
+        "Omonoia FC"
+      ]
     },
     "Operario PR": {
       "api_football": [
@@ -2107,6 +2210,9 @@
       "understat": []
     },
     "Paphos FC": {
+      "espn": [
+        "Pafos"
+      ],
       "odds_api": [
         "Pafos FC"
       ]
@@ -2208,6 +2314,11 @@
       ],
       "understat": []
     },
+    "Qarabağ Ağdam FK": {
+      "espn": [
+        "FK Qarabag"
+      ]
+    },
     "Queens Park Rangers": {
       "fbref": [],
       "football_data": [
@@ -2249,6 +2360,9 @@
       "odds_api": []
     },
     "Rapid Wien": {
+      "espn": [
+        "Rapid Vienna"
+      ],
       "football_data": [
         "SK Rapid"
       ],
@@ -2423,6 +2537,11 @@
       ],
       "understat": []
     },
+    "SK Slavia Praha": {
+      "espn": [
+        "Slavia Prague"
+      ]
+    },
     "SV Zulte-Waregem": {
       "fbref": [],
       "football_data": [
@@ -2537,6 +2656,9 @@
       ]
     },
     "Sp Braga": {
+      "espn": [
+        "Braga"
+      ],
       "football_data": [
         "Sp Braga"
       ],
@@ -2575,6 +2697,9 @@
       "understat": []
     },
     "Sporting Lisbon": {
+      "espn": [
+        "Sporting CP"
+      ],
       "fbref": [],
       "football_data": [
         "Sp Lisbon"
@@ -2588,11 +2713,17 @@
       "understat": []
     },
     "St Truiden": {
+      "espn": [
+        "Sint-Truidense"
+      ],
       "odds_api": [
         "Sint Truiden"
       ]
     },
     "St. Gilloise": {
+      "espn": [
+        "Union St.-Gilloise"
+      ],
       "football_data": [
         "St. Gilloise"
       ],
@@ -2824,6 +2955,14 @@
       "odds_api": [],
       "understat": []
     },
+    "Univ. Craiova": {
+      "espn": [
+        "CSU Craiova"
+      ],
+      "odds_api": [
+        "Universitatea Craiova"
+      ]
+    },
     "Universidad Católica": {
       "espn": [
         "Universidad Católica"
@@ -2928,6 +3067,9 @@
       "understat": []
     },
     "Vitória SC": {
+      "espn": [
+        "Vitória de Guimaraes"
+      ],
       "fbref": [],
       "football_data": [
         "Guimaraes"
@@ -3143,6 +3285,11 @@
         "Slask Wroclaw"
       ],
       "odds_api": []
+    },
+    "ŠK Slovan Bratislava": {
+      "espn": [
+        "Slovan Bratislava"
+      ]
     }
   },
   "sources": [

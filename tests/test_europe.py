@@ -84,3 +84,34 @@ def test_chaque_coupe_a_une_cle_de_cotes_et_un_modele_d_emprunt():
             assert info["rattachement"] in config.CHAMPIONNATS, code
         assert config.est_coupe(code)
         assert config.nom_championnat(code) == info["nom"]
+
+
+# -- Ligue Europa / Conference via ESPN -------------------------------------
+
+def _evenement_espn(jour, dom, ext, bd, be, statut="STATUS_FULL_TIME"):
+    return {"date": f"{jour}T20:00Z",
+            "status": {"type": {"name": statut, "completed": True, "state": "post"}},
+            "competitions": [{"competitors": [
+                {"homeAway": "home", "score": str(bd), "team": {"displayName": dom}},
+                {"homeAway": "away", "score": str(be), "team": {"displayName": ext}}]}]}
+
+
+def test_coupes_espn_noms_resolus_et_prolongations_ecartees(monkeypatch) -> None:
+    from datetime import date
+    from data import espn as espn_module
+    from data import europe as europe_data
+
+    def faux(code, annee, ttl=None, identifiant=None):
+        if code != "UEL" or annee != 2025:
+            return []
+        return [_evenement_espn("2025-10-02", "Olympiacos", "Benfica", 2, 1),
+                _evenement_espn("2025-10-23", "Ferencvaros", "Benfica", 1, 1),
+                _evenement_espn("2026-03-12", "Olympiacos", "Benfica", 1, 2,
+                                statut="STATUS_FINAL_AET")]
+
+    monkeypatch.setattr(espn_module, "evenements", faux)
+    sortie = europe_data.charger_coupes_espn(
+        1, ["Olympiakos", "Benfica"], aujourdhui=date(2025, 11, 1))
+    assert len(sortie) == 2                          # la prolongation est ecartee
+    assert set(sortie["dom"]) == {"Olympiakos", "Ferencvaros"}
+    assert set(sortie["championnat"]) == {"UEL"}

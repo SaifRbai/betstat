@@ -141,6 +141,15 @@ def entrainer(saisons: int = 4, xi: float | None = None
             "cle FOOTBALL_DATA_ORG_KEY absente ou reseau coupe, et pas de cache). "
             "Sans eux les championnats ne sont pas comparables : pas d'estimation.")
 
+    # Ligue Europa et Conference (ESPN) : les noms deja vus en Ligue des
+    # champions servent aussi de reference, pour qu'un club hors championnats
+    # charges (Slavia, Qarabag...) reste UN club d'une coupe a l'autre.
+    connues_coupes = connues | set(europeens["dom"]) | set(europeens["ext"])
+    autres_coupes = europe_module.charger_coupes_espn(saisons, connues_coupes)
+    if not autres_coupes.empty:
+        europeens = (pd.concat([europeens, autres_coupes], ignore_index=True)
+                     .sort_values("date").reset_index(drop=True))
+
     retenus, ponts = composante_reliee(charges, europeens)
     rapport.championnats, rapport.ponts = retenus, ponts
     for code in charges:

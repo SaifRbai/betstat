@@ -1842,8 +1842,31 @@ function carteMarcheSeul(e) {
       </div>
       <div class="secondaire"><span>1${cote("1")}</span><span>N${cote("N")}</span><span>2${cote("2")}</span></div>`
       : `<div class="secondaire">aucune cote disponible</div>`}
-    </div>`;
+    </div>
+    ${a1n2 ? pronoDuMarche(e, p, best) : ""}`;
   return div;
+}
+
+// Le prono du marche : l'issue que les bookmakers jugent la plus probable, et
+// la double chance la plus couverte. Aucune mise : sans modele, il n'y a pas
+// d'ecart a exploiter, la cote equitable est la cote du marche.
+function pronoDuMarche(e, p, best) {
+  const libelles = { "1": `Victoire ${e.dom}`, "N": "Match nul", "2": `Victoire ${e.ext}` };
+  const favori = ["1", "N", "2"].reduce((a, b) => (p[b] > p[a] ? b : a));
+  const doubles = [["1N", p["1"] + p.N, `${e.dom} ou nul`],
+                   ["N2", p.N + p["2"], `${e.ext} ou nul`],
+                   ["12", p["1"] + p["2"], "pas de nul"]];
+  const [code, proba, texte] = doubles.reduce((a, b) => (b[1] > a[1] ? b : a));
+  const buts = typeof p.plus === "number"
+    ? (p.plus >= p.moins ? `Plus de 2.5 buts ${pourcent(p.plus)}` : `Moins de 2.5 buts ${pourcent(p.moins)}`)
+    : "";
+  return `<div class="prono" style="grid-column: 1 / -1">
+    <span class="secondaire">PRONO DU MARCHE</span>
+    <b>${favori}</b> ${libelles[favori]} — ${pourcent(p[favori])}${best[favori] ? ` @ ${best[favori].toFixed(2)}` : ""}
+    · ou couvert <b>${code}</b> ${texte} — ${pourcent(proba)} (cote equitable ${(1 / proba).toFixed(2)})
+    ${buts ? `· ${buts}` : ""}
+    <div class="secondaire">Avis des bookmakers, marge retiree : ni estimation du modele, ni mise conseillee.</div>
+  </div>`;
 }
 
 // Le bilan mesure de la regle, en tete du coupon. « Gain attendu » est une
