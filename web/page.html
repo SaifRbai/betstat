@@ -1336,7 +1336,8 @@ function blocCoupe(m) {
   if (!c) return "";
   const lien = c.type === "europe"
     ? `Ces championnats sont mis a la meme echelle par ${c.matchs_europeens} matchs
-       de Ligue des champions (football-data.org) : c'est peu, et l'ecart de niveau
+       de coupe d'Europe (Ligue des champions via football-data.org, Ligue Europa
+       et Conference via ESPN), avec un niveau propre a chaque championnat : l'ecart de niveau
        entre deux pays en depend entierement.${c.ecartes && c.ecartes.length
          ? ` Ecartes faute de matchs europeens en nombre suffisant : ${c.ecartes.join(", ")}.`
          : ""}`

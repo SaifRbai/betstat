@@ -919,7 +919,7 @@ def test_un_match_de_coupe_porte_son_modele_et_sa_reserve(bouchons, monkeypatch)
     assert matchs and matchs[0]["coupe"] == description
     assert matchs[0]["pronos_annexes"] == []
     reserves = " ".join(r for p in matchs[0]["pronos"] for r in p.get("reserves", []))
-    assert "30 matchs de Ligue des champions" in reserves
+    assert "30 matchs de coupe d'Europe" in reserves
 
 
 def test_une_coupe_n_a_ni_corners_ni_cartons():

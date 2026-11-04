@@ -300,10 +300,19 @@ def entrainer(
     force_domicile_separee: bool = False,
     date_reference: pd.Timestamp | None = None,
     regularisation: float | None = None,
+    groupes: dict[str, str] | None = None,
 ) -> ModeleDixonColes:
     """Estime les parametres par maximum de vraisemblance ponderee (L-BFGS-B).
 
     `regularisation` : penalite L2 sur les forces d'equipe (voir REGULARISATION_DEFAUT).
+
+    `groupes` (equipe -> championnat) : chaque groupe recoit un niveau
+    d'attaque et de defense propre, NON penalise, et la penalite ne porte plus
+    que sur l'ecart de chaque equipe au niveau de son groupe. Sans cela, sur
+    plusieurs championnats a la fois, la penalite ramene tous les clubs vers
+    une moyenne commune et efface la difference de niveau entre championnats
+    (AEK presque a egalite avec le Real Madrid). Une equipe absente du
+    dictionnaire forme le groupe « hors championnat ».
     """
     if regularisation is None:
         regularisation = REGULARISATION_DEFAUT
@@ -321,27 +330,48 @@ def entrainer(
     buts_ext = matchs["buts_ext"].to_numpy(dtype=float)
     poids = poids_temporels(matchs["date"], xi, date_reference)
 
+    taille_base = (4 * n if force_domicile_separee else 2 * n) + 2
+    if groupes:
+        noms_groupes = sorted({groupes.get(e, "@hors") for e in equipes})
+        rang_groupe = {g: i for i, g in enumerate(noms_groupes)}
+        i_groupe = np.array([rang_groupe[groupes.get(e, "@hors")] for e in equipes])
+        nb_groupes = len(noms_groupes)
+    else:
+        i_groupe, nb_groupes = np.zeros(n, dtype=int), 0
+
+    def forces(parametres: np.ndarray) -> tuple:
+        att_d, att_e, def_d, def_e, gamma, rho = _decouper(
+            parametres[:taille_base], n, force_domicile_separee)
+        if nb_groupes:
+            niveaux = parametres[taille_base:]
+            off_att = niveaux[:nb_groupes][i_groupe]
+            off_def = niveaux[nb_groupes:][i_groupe]
+            att_d, att_e = att_d + off_att, att_e + off_att
+            def_d, def_e = def_d + off_def, def_e + off_def
+        return att_d, att_e, def_d, def_e, gamma, rho
+
     def objectif(parametres: np.ndarray) -> float:
-        att_d, att_e, def_d, def_e, gamma, rho = _decouper(parametres, n, force_domicile_separee)
+        att_d, att_e, def_d, def_e, gamma, rho = forces(parametres)
         lam = np.exp(att_d[i_dom] + def_e[i_ext] + gamma)
         mu = np.exp(att_e[i_ext] + def_d[i_dom])
         lam = np.clip(lam, 1e-8, 25.0)
         mu = np.clip(mu, 1e-8, 25.0)
         log_v = _log_poisson_continu(y_dom, lam) + _log_poisson_continu(y_ext, mu)
         log_v = log_v + _log_tau(buts_dom, buts_ext, lam, mu, rho)
-        penalite = regularisation * float(np.sum(parametres[:-2] ** 2))
+        # Les niveaux de groupe, places apres gamma et rho, ne sont pas penalises.
+        penalite = regularisation * float(np.sum(parametres[:taille_base - 2] ** 2))
         return -float(np.sum(poids * log_v)) + penalite
 
-    taille = (4 * n if force_domicile_separee else 2 * n) + 2
-    depart = np.zeros(taille)
-    depart[-2] = 0.25   # avantage du terrain initial
-    depart[-1] = -0.05  # rho initial
-    bornes = [(-3.0, 3.0)] * (taille - 2) + [(-1.0, 1.0), (-BORNE_RHO, BORNE_RHO)]
+    depart = np.zeros(taille_base + 2 * nb_groupes)
+    depart[taille_base - 2] = 0.25   # avantage du terrain initial
+    depart[taille_base - 1] = -0.05  # rho initial
+    bornes = ([(-3.0, 3.0)] * (taille_base - 2) + [(-1.0, 1.0), (-BORNE_RHO, BORNE_RHO)]
+              + [(-3.0, 3.0)] * (2 * nb_groupes))
 
     solution = minimize(objectif, depart, method="L-BFGS-B", bounds=bornes,
-                        options={"maxiter": 800, "ftol": 1e-10})
+                        options={"maxiter": 800 if not nb_groupes else 3000, "ftol": 1e-10})
 
-    att_d, att_e, def_d, def_e, gamma, rho = _decouper(solution.x, n, force_domicile_separee)
+    att_d, att_e, def_d, def_e, gamma, rho = forces(solution.x)
     return _finaliser(
         equipes, att_d, att_e, def_d, def_e, float(gamma), float(rho),
         xi, cible, poids_xg, force_domicile_separee, len(matchs),

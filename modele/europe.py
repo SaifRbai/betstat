@@ -173,6 +173,10 @@ def entrainer(saisons: int = 4, xi: float | None = None
     rapport.nb_matchs = len(matchs)
     rapport.nb_equipes = len(set(matchs["dom"]) | set(matchs["ext"]))
 
-    modele = dc.entrainer(matchs, cible="buts", xi=xi if xi is not None else dc.XI_DEFAUT)
+    # Un niveau par championnat : sans lui, la penalite L2 ecrase les ecarts
+    # de niveau entre pays (voir dc.entrainer, parametre `groupes`).
+    groupes = {equipe: code for equipe, code in ligue.items() if code in retenus}
+    modele = dc.entrainer(matchs, cible="buts", xi=xi if xi is not None else dc.XI_DEFAUT,
+                          groupes=groupes)
     _journal.info("Modele europeen %s", rapport.resume())
     return matchs, modele, rapport

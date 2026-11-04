@@ -756,7 +756,7 @@ def affiches(championnat: str,
                 f"({'+'.join(coupe['championnats'])}) : ni calibration ni ROI n'ont "
                 "ete mesures sur des matchs de coupe"
                 + (", et le niveau relatif des championnats ne repose que sur "
-                   f"{coupe['matchs_europeens']} matchs de Ligue des champions"
+                   f"{coupe['matchs_europeens']} matchs de coupe d'Europe (C1, C3, C4)"
                    if coupe["type"] == "europe" else ""))
         p_marche = marche_devigge.get((ligne.dom, ligne.ext), {})
         meilleures = cotes_module.meilleures_cotes(detail)

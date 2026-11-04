@@ -160,3 +160,30 @@ def test_regularisation_par_defaut() -> None:
     defaut = dc.entrainer(matchs, xi=0.0)
     explicite = dc.entrainer(matchs, xi=0.0, regularisation=dc.REGULARISATION_DEFAUT)
     assert defaut.attaque == pytest.approx(explicite.attaque)
+
+
+def test_niveaux_de_groupe_preservent_l_ecart_entre_championnats() -> None:
+    """Deux championnats d'equipes egales entre elles, l'un nettement plus fort,
+    relies par quelques matchs : avec un niveau par groupe, la penalite L2 ne
+    doit plus ramener les deux championnats a la meme moyenne."""
+    import pandas as pd
+    from modele import dixon_coles as dc
+    fortes = {f"F{i}": 0.5 for i in range(6)}
+    faibles = {f"W{i}": -0.5 for i in range(6)}
+    attaques = {**fortes, **faibles}
+    defenses = {e: -a for e, a in attaques.items()}
+    m1 = dc.simuler_championnat(list(fortes), attaques, defenses, 0.25, nb_tours=3, graine=1)
+    m2 = dc.simuler_championnat(list(faibles), attaques, defenses, 0.25, nb_tours=3, graine=2)
+    ponts = dc.simuler_championnat(["F0", "W0", "F1", "W1"], attaques, defenses, 0.25,
+                                   nb_tours=2, graine=3)
+    ponts = ponts[ponts["dom"].str[0] != ponts["ext"].str[0]]
+    matchs = pd.concat([m1, m2, ponts], ignore_index=True)
+    groupes = {e: e[0] for e in attaques}
+
+    def ecart(modele):
+        note = {e: modele.attaque[e] - modele.defense[e] for e in attaques}
+        return (sum(note[e] for e in fortes) - sum(note[e] for e in faibles)) / 6
+
+    sans = ecart(dc.entrainer(matchs, xi=0.0))
+    avec = ecart(dc.entrainer(matchs, xi=0.0, groupes=groupes))
+    assert avec > sans + 0.3        # vrai ecart : 2.0 ; la penalite l'ecrasait
