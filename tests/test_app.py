@@ -91,25 +91,6 @@ def test_stats_brutes_colonnes_absentes(app_module):
 
 
 # --------------------------------------------------------------------------
-# Manque #1 : vraies affiches de la journee
-# --------------------------------------------------------------------------
-
-def test_affiches_a_venir_resout_les_noms(app_module):
-    cotes = pd.DataFrame({
-        "date": ["2026-08-22T18:00:00Z", "2026-08-22T20:00:00Z"],
-        "dom": ["Paris SG", "Lens"], "ext": ["Marseille", "Inconnu FC"],
-        "bookmaker": ["b1", "b1"]})
-    faux = SimpleNamespace(contexte=SimpleNamespace(
-        cotes=cotes, modele=SimpleNamespace(equipes=["Paris SG", "Marseille", "Lens"])))
-    assert app_module.Application.affiches_a_venir(faux) == [("Paris SG", "Marseille")]
-
-
-def test_affiches_a_venir_sans_cotes(app_module):
-    faux = SimpleNamespace(contexte=SimpleNamespace(cotes=None, modele=None))
-    assert app_module.Application.affiches_a_venir(faux) == []
-
-
-# --------------------------------------------------------------------------
 # Bloc 4 : annulation et preferences
 # --------------------------------------------------------------------------
 

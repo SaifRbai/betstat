@@ -411,3 +411,16 @@ def test_la_serie_b_vient_d_espn_avec_les_noms_de_la_serie_a(tmp_path, monkeypat
     df = resultats.charger("BRB", 1, aujourdhui=date(2025, 12, 31))
     assert set(df["dom"]) == {"Atletico GO", "Novorizontino"}      # TBD ecarte
     assert "Sport Recife" in set(df["ext"])
+
+
+def test_cote_invalide_ignoree_au_profit_de_la_suivante() -> None:
+    """Une cote <= 1 (vu en vrai : -0.25) est fausse : la colonne suivante prend le relais."""
+    brut = pd.DataFrame({
+        "Date": ["09/08/2019", "10/08/2019"], "HomeTeam": ["Monaco", "Nice"],
+        "AwayTeam": ["Lyon", "Reims"], "FTHG": [0, 2], "FTAG": [3, 1],
+        "Avg>2.5": [1.9, 2.6], "Avg<2.5": [-0.25, 1.0], "B365<2.5": [1.95, None],
+    })
+    propre = resultats.nettoyer(brut, "1920", "F1")
+    assert propre.loc[0, "cote_moins25"] == pytest.approx(1.95)
+    assert pd.isna(propre.loc[1, "cote_moins25"])
+    assert propre["cote_plus25"].tolist() == pytest.approx([1.9, 2.6])

@@ -989,3 +989,51 @@ def test_un_match_present_sous_deux_orthographes_n_apparait_qu_une_fois(bouchons
                         lambda nom, equipes: "Paris SG" if "Paris" in nom else nom)
     matchs, _, _ = web.affiches("F1")
     assert len(matchs) == 1
+
+
+def _cotes_ksa() -> pd.DataFrame:
+    lignes = []
+    for heure, dom, ext in (("2026-11-06 14:30", "Al Fateh", "Al Riyadh"),
+                            ("2026-11-06 17:30", "Al Ittihad", "Neom SC"),
+                            ("2026-11-07 17:30", "Al Ahli", "Al Taawoun")):
+        for book in ("Pinnacle", "1xBet"):
+            lignes.append({"date": pd.Timestamp(heure, tz="UTC"), "dom": dom, "ext": ext,
+                           "bookmaker": book, "marche": "1N2", "selection": "1", "cote": 2.0})
+    return pd.DataFrame(lignes)
+
+
+def _statut(heure: str, dom: str, ext: str, annule: bool) -> dict:
+    return {"coup_envoi": pd.Timestamp(heure, tz="UTC").to_pydatetime(),
+            "dom": dom, "ext": ext, "annule": annule}
+
+
+def test_un_match_reporte_selon_espn_disparait_meme_s_il_reste_cote(monkeypatch):
+    """Vu en vrai : une journee de Saudi Pro League reportee, toujours cotee."""
+    monkeypatch.setattr(web.espn_module, "statuts_autour", lambda ligue, depuis: [
+        _statut("2026-11-06 20:00", "Al Fateh", "Al Riyadh", True),   # heure differente
+        _statut("2026-11-06 20:00", "Al Ittihad", "Neom SC", True),
+        _statut("2026-11-07 20:00", "Al Ahli", "Al Taawoun", False),
+    ])
+    restant = web._sans_matchs_reportes("KSA", _cotes_ksa())
+    assert set(zip(restant["dom"], restant["ext"])) == {("Al Ahli", "Al Taawoun")}
+
+
+def test_un_match_reprogramme_n_est_pas_retire(monkeypatch):
+    """Ancienne date annulee, nouvelle date au programme : le match reste."""
+    monkeypatch.setattr(web.espn_module, "statuts_autour", lambda ligue, depuis: [
+        _statut("2026-11-05 20:00", "Al Fateh", "Al Riyadh", True),
+        _statut("2026-11-06 14:30", "Al Fateh", "Al Riyadh", False),
+    ])
+    restant = web._sans_matchs_reportes("KSA", _cotes_ksa())
+    assert ("Al Fateh", "Al Riyadh") in set(zip(restant["dom"], restant["ext"]))
+    assert len(restant) == len(_cotes_ksa())
+
+
+def test_sans_espn_rien_n_est_retire(monkeypatch):
+    appels = []
+    monkeypatch.setattr(web.espn_module, "statuts_autour",
+                        lambda ligue, depuis: appels.append(ligue) or [])
+    cotes = _cotes_ksa()
+    assert len(web._sans_matchs_reportes("KSA", cotes)) == len(cotes)
+    assert len(web._sans_matchs_reportes("F1", cotes)) == len(cotes)   # pas d'ESPN
+    assert appels == ["KSA"]

@@ -116,3 +116,33 @@ def test_taux_mesure_dans_le_bon_sens() -> None:
 
     ligne_xg = verifier_noms._ligne_taux(rapport, equipes_fd, equipes_b, "understat")
     assert "40.0%" in ligne_xg and "2/5" in ligne_xg
+
+
+def test_journee_ecarte_les_equipes_releguees() -> None:
+    """Vu en vrai : Metz et St Etienne, relegues, sortaient en tete de la journee."""
+    matchs = pd.DataFrame({
+        "saison": [2425, 2425, 2526, 2526], "date": pd.to_datetime(
+            ["2024-09-01", "2024-09-08", "2025-09-01", "2025-09-08"]),
+        "dom": ["A", "Relegue", "A", "Promu"], "ext": ["Relegue", "A", "Promu", "A"]})
+    assert cli.equipes_saison_en_cours(matchs) == ["A", "Promu"]
+
+
+class _ModeleFactice:
+    equipes = ["A", "B"]
+
+    def predire(self, dom: str, ext: str) -> dict:
+        return {"1N2": {"1": 0.5, "N": 0.3, "2": 0.2},
+                "totaux": {"plus_2.5": 0.5, "plus_3.5": 0.3, "moins_2.5": 0.5},
+                "btts": {"oui": 0.5}, "buts_attendus": {"total": 2.6}}
+
+
+def test_journee_garde_les_matchs_du_calendrier_meme_inestimables() -> None:
+    calendrier = pd.DataFrame({
+        "date": pd.to_datetime(["2026-11-07 18:00", "2026-11-08 14:00"], utc=True),
+        "dom": ["A", "Inconnu"], "ext": ["B", "A"]})
+    tableau = cli._tableau_calendrier(_ModeleFactice(), calendrier)
+    assert list(tableau["dom"]) == ["A", "Inconnu"]
+    assert tableau.loc[0, "p1"] == 0.5
+    assert pd.isna(tableau.loc[1, "p1"])
+    # Sans filtre, le calendrier reste dans l'ordre chronologique.
+    assert list(cli._filtrer_journee(tableau, "aucun")["dom"]) == ["A", "Inconnu"]

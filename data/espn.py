@@ -209,6 +209,37 @@ def csv_saison(ligue: str, saison: str) -> bytes:
 # Calendrier des ligues sans cotes
 # --------------------------------------------------------------------------
 
+STATUTS_ANNULES = ("STATUS_POSTPONED", "STATUS_CANCELED", "STATUS_ABANDONED")
+
+
+def statuts_autour(ligue: str, depuis: datetime) -> list[dict]:
+    """Matchs ESPN a partir de `depuis` (UTC), annules compris, avec leur statut.
+
+    Sert a recouper un calendrier d'une autre source : The Odds API continue
+    de lister, et les bookmakers de coter, des matchs qu'ESPN donne deja pour
+    reportes (vu en vrai : toute une journee de Saudi Pro League). Chaque
+    element : coup_envoi, dom, ext, annule (bool). Ne leve jamais : liste vide
+    sans reseau ni cache, ou pour une ligue sans identifiant ESPN.
+    """
+    if slug(ligue) is None:
+        return []
+    sortie = []
+    for an in sorted({depuis.year, (depuis + timedelta(days=3)).year}):
+        try:
+            donnees = evenements(ligue, an, ttl=TTL_CALENDRIER_SECONDES)
+        except Exception as erreur:
+            _journal.warning("Statuts ESPN %s %s indisponibles : %s", ligue, an, erreur)
+            continue
+        for evenement in donnees:
+            match = _match(evenement)
+            if match is None or match["coup_envoi"] < depuis:
+                continue
+            sortie.append({"coup_envoi": match["coup_envoi"], "dom": match["dom"],
+                           "ext": match["ext"],
+                           "annule": match["nom_statut"] in STATUTS_ANNULES})
+    return sortie
+
+
 def calendrier(ligue: str, depuis: datetime | None = None) -> pd.DataFrame:
     """Matchs a partir de `depuis` (UTC), au format de `cotes.matchs_a_venir`.
 
@@ -230,8 +261,7 @@ def calendrier(ligue: str, depuis: datetime | None = None) -> pd.DataFrame:
             match = _match(evenement)
             if match is None or match["coup_envoi"] < depuis:
                 continue
-            if match["nom_statut"] in ("STATUS_POSTPONED", "STATUS_CANCELED",
-                                       "STATUS_ABANDONED"):
+            if match["nom_statut"] in STATUTS_ANNULES:
                 continue
             lignes.append({
                 "date": pd.Timestamp(match["coup_envoi"]),   # meme forme que les cotes

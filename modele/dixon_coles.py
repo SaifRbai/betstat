@@ -26,7 +26,7 @@ import pandas as pd
 from scipy.optimize import minimize
 from scipy.special import gammaln
 
-Cible = Literal["buts", "xg", "melange"]
+Cible = Literal["buts", "xg", "melange", "tirs", "marche"]
 
 TAILLE_MATRICE = 12          # scores 0 a 11 par equipe
 XI_DEFAUT = 0.0018           # demi-vie d'environ 385 jours
@@ -38,6 +38,26 @@ BORNE_RHO = 0.35
 # SP1 0.981->0.976, I1 0.965->0.968. La valeur par championnat est recalibree
 # par `cli.py calibrer` (cle "regularisation" des hyperparametres).
 REGULARISATION_DEFAUT = 3.0
+
+# Cible "marche" : buts implicites des cotes des matchs deja joues (voir
+# modele/marche_implicite.py). La cible etant bien moins bruitee que le score,
+# elle supporte un oubli plus rapide et un retrecissement plus faible. Valeurs
+# retenues par walk-forward sur F1, E0, SP1, I1, D1, N1 (4 saisons).
+POIDS_MARCHE_DEFAUT = 0.8
+XI_MARCHE_DEFAUT = 0.004
+REGULARISATION_MARCHE_DEFAUT = 0.3
+
+
+# Cible utilisee par l'application quand rien n'est precise.
+CIBLE_DEFAUT: Cible = "marche"
+
+
+def defauts_cible(cible: str) -> dict[str, float]:
+    """xi, w et regularisation par defaut, selon la cible d'entrainement."""
+    if cible == "marche":
+        return {"xi": XI_MARCHE_DEFAUT, "w": POIDS_MARCHE_DEFAUT,
+                "regularisation": REGULARISATION_MARCHE_DEFAUT}
+    return {"xi": XI_DEFAUT, "w": POIDS_XG_DEFAUT, "regularisation": REGULARISATION_DEFAUT}
 
 
 # --------------------------------------------------------------------------
@@ -225,12 +245,81 @@ def construire_marches(
 # Entrainement
 # --------------------------------------------------------------------------
 
+COLONNES_TIRS = ("tirs_dom", "tirs_ext", "tirs_cadres_dom", "tirs_cadres_ext")
+
+
+def coefficients_tirs(matchs: pd.DataFrame) -> tuple[float, float] | None:
+    """Buts ~ a * tirs cadres + b * tirs non cadres, par moindres carres sans constante.
+
+    Ajuste sur les matchs fournis, donc sur la seule periode d'entrainement :
+    aucune information du futur n'entre dans les coefficients. None si les
+    tirs manquent (sources ESPN, vieux CSV) ou sont trop rares pour estimer.
+    """
+    if not set(COLONNES_TIRS) <= set(matchs.columns):
+        return None
+    cadres = np.r_[matchs["tirs_cadres_dom"], matchs["tirs_cadres_ext"]].astype(float)
+    tirs = np.r_[matchs["tirs_dom"], matchs["tirs_ext"]].astype(float)
+    buts = np.r_[matchs["buts_dom"], matchs["buts_ext"]].astype(float)
+    non_cadres = tirs - cadres
+    valides = ~(np.isnan(cadres) | np.isnan(non_cadres) | np.isnan(buts)) & (non_cadres >= 0)
+    if valides.sum() < 100:
+        return None
+    a, b = np.linalg.lstsq(np.c_[cadres[valides], non_cadres[valides]],
+                           buts[valides], rcond=None)[0]
+    return float(max(a, 0.0)), float(max(b, 0.0))
+
+
+def xg_par_les_tirs(matchs: pd.DataFrame) -> tuple[np.ndarray, np.ndarray] | None:
+    """« xG du pauvre » tire des tirs : disponible pour tous les championnats
+    football-data, contrairement aux vrais xG (5 grands championnats).
+
+    Mesure walk-forward sur 4 saisons, log-loss 1N2 du modele seul, buts ->
+    0.7*tirs+0.3*buts : N1 0.9968->0.9861, D1 1.0082->1.0029, E1 1.0571->1.0519,
+    E0 1.0103->1.0078 ; mais SP1 0.9761->0.9801, I1 0.9697->0.9767,
+    P1 0.9420->0.9467. Le poids w se calibre donc par championnat.
+    """
+    coefficients = coefficients_tirs(matchs)
+    if coefficients is None:
+        return None
+    a, b = coefficients
+    def estimer(cote: str) -> np.ndarray:
+        cadres = matchs[f"tirs_cadres_{cote}"].to_numpy(dtype=float)
+        tirs = matchs[f"tirs_{cote}"].to_numpy(dtype=float)
+        return a * cadres + b * np.clip(tirs - cadres, 0.0, None)
+    return estimer("dom"), estimer("ext")
+
+
 def cible_entrainement(matchs: pd.DataFrame, cible: Cible, poids_xg: float) -> tuple[np.ndarray, np.ndarray]:
     """Valeurs a expliquer par le modele, selon le mode choisi."""
     buts_dom = matchs["buts_dom"].to_numpy(dtype=float)
     buts_ext = matchs["buts_ext"].to_numpy(dtype=float)
     if cible == "buts":
         return buts_dom, buts_ext
+
+    if cible == "marche":
+        from modele.marche_implicite import buts_implicites  # import tardif : scipy.spatial
+
+        colonnes = ("cote_1", "cote_N", "cote_2", "cote_plus25", "cote_moins25")
+        if not set(colonnes) <= set(matchs.columns):
+            # Source sans cotes (ESPN) : on retombe sur les buts, comme "tirs".
+            return buts_dom, buts_ext
+        lam, mu = buts_implicites(*(matchs[c] for c in colonnes))
+        # Un match sans cotes exploitables garde ses buts reels.
+        lam = np.where(np.isnan(lam), buts_dom, lam)
+        mu = np.where(np.isnan(mu), buts_ext, mu)
+        w = float(np.clip(poids_xg, 0.0, 1.0))
+        return w * lam + (1 - w) * buts_dom, w * mu + (1 - w) * buts_ext
+
+    if cible == "tirs":
+        estimes = xg_par_les_tirs(matchs)
+        if estimes is None:
+            # Pas de tirs dans cette source : on retombe sur les buts plutot
+            # que d'echouer, le modele reste celui de la cible "buts".
+            return buts_dom, buts_ext
+        xg_dom = np.where(np.isnan(estimes[0]), buts_dom, estimes[0])
+        xg_ext = np.where(np.isnan(estimes[1]), buts_ext, estimes[1])
+        w = float(np.clip(poids_xg, 0.0, 1.0))
+        return w * xg_dom + (1 - w) * buts_dom, w * xg_ext + (1 - w) * buts_ext
 
     if "xg_dom" not in matchs.columns:
         raise ValueError(
@@ -315,7 +404,7 @@ def entrainer(
     dictionnaire forme le groupe « hors championnat ».
     """
     if regularisation is None:
-        regularisation = REGULARISATION_DEFAUT
+        regularisation = defauts_cible(cible)["regularisation"]
     matchs = matchs.dropna(subset=["dom", "ext", "buts_dom", "buts_ext"]).reset_index(drop=True)
     if len(matchs) < 20:
         raise ValueError(
@@ -350,17 +439,68 @@ def entrainer(
             def_d, def_e = def_d + off_def, def_e + off_def
         return att_d, att_e, def_d, def_e, gamma, rho
 
-    def objectif(parametres: np.ndarray) -> float:
+    # Masques des quatre petits scores, constants pendant l'optimisation.
+    s00 = (buts_dom == 0) & (buts_ext == 0)
+    s01 = (buts_dom == 0) & (buts_ext == 1)
+    s10 = (buts_dom == 1) & (buts_ext == 0)
+    s11 = (buts_dom == 1) & (buts_ext == 1)
+
+    def objectif(parametres: np.ndarray) -> tuple[float, np.ndarray]:
+        """Vraisemblance negative penalisee ET son gradient exact.
+
+        Sans gradient, L-BFGS-B l'approche par differences finies : 2n+2
+        evaluations de l'objectif par iteration. Le gradient analytique rend
+        l'entrainement des dizaines de fois plus rapide, ce qui permet un
+        walk-forward reentraine a chaque journee.
+        """
         att_d, att_e, def_d, def_e, gamma, rho = forces(parametres)
-        lam = np.exp(att_d[i_dom] + def_e[i_ext] + gamma)
-        mu = np.exp(att_e[i_ext] + def_d[i_dom])
-        lam = np.clip(lam, 1e-8, 25.0)
-        mu = np.clip(mu, 1e-8, 25.0)
+        lam_brut = np.exp(att_d[i_dom] + def_e[i_ext] + gamma)
+        mu_brut = np.exp(att_e[i_ext] + def_d[i_dom])
+        lam = np.clip(lam_brut, 1e-8, 25.0)
+        mu = np.clip(mu_brut, 1e-8, 25.0)
         log_v = _log_poisson_continu(y_dom, lam) + _log_poisson_continu(y_ext, mu)
         log_v = log_v + _log_tau(buts_dom, buts_ext, lam, mu, rho)
         # Les niveaux de groupe, places apres gamma et rho, ne sont pas penalises.
         penalite = regularisation * float(np.sum(parametres[:taille_base - 2] ** 2))
-        return -float(np.sum(poids * log_v)) + penalite
+        valeur = -float(np.sum(poids * log_v)) + penalite
+
+        # -- gradient de la log-vraisemblance par rapport a log(lam), log(mu), rho
+        tau = np.ones_like(lam)
+        tau = np.where(s00, 1 - lam * mu * rho, tau)
+        tau = np.where(s01, 1 + lam * rho, tau)
+        tau = np.where(s10, 1 + mu * rho, tau)
+        tau = np.where(s11, 1 - rho, tau)
+        actif = tau > 1e-10                       # hors de la zone ecretee
+        inv_tau = np.where(actif, 1.0 / np.where(actif, tau, 1.0), 0.0)
+        dtau_lam = np.where(s00, -mu * rho, 0.0) + np.where(s01, rho, 0.0)
+        dtau_mu = np.where(s00, -lam * rho, 0.0) + np.where(s10, rho, 0.0)
+        dtau_rho = (np.where(s00, -lam * mu, 0.0) + np.where(s01, lam, 0.0)
+                    + np.where(s10, mu, 0.0) - s11.astype(float))
+        g_lam = poids * (y_dom - lam + lam * dtau_lam * inv_tau)
+        g_mu = poids * (y_ext - mu + mu * dtau_mu * inv_tau)
+        g_lam = np.where((lam_brut > 1e-8) & (lam_brut < 25.0), g_lam, 0.0)
+        g_mu = np.where((mu_brut > 1e-8) & (mu_brut < 25.0), g_mu, 0.0)
+
+        g_att_d = np.bincount(i_dom, g_lam, n)
+        g_def_e = np.bincount(i_ext, g_lam, n)
+        g_att_e = np.bincount(i_ext, g_mu, n)
+        g_def_d = np.bincount(i_dom, g_mu, n)
+        gradient = np.zeros_like(parametres)
+        if force_domicile_separee:
+            gradient[:n], gradient[n:2 * n] = g_att_d, g_att_e
+            gradient[2 * n:3 * n], gradient[3 * n:4 * n] = g_def_d, g_def_e
+        else:
+            gradient[:n], gradient[n:2 * n] = g_att_d + g_att_e, g_def_d + g_def_e
+        gradient[taille_base - 2] = g_lam.sum()
+        gradient[taille_base - 1] = float(np.sum(poids * dtau_rho * inv_tau))
+        if nb_groupes:
+            gradient[taille_base:taille_base + nb_groupes] = np.bincount(
+                i_groupe, g_att_d + g_att_e, nb_groupes)
+            gradient[taille_base + nb_groupes:] = np.bincount(
+                i_groupe, g_def_d + g_def_e, nb_groupes)
+        gradient = -gradient
+        gradient[:taille_base - 2] += 2.0 * regularisation * parametres[:taille_base - 2]
+        return valeur, gradient
 
     depart = np.zeros(taille_base + 2 * nb_groupes)
     depart[taille_base - 2] = 0.25   # avantage du terrain initial
@@ -368,7 +508,7 @@ def entrainer(
     bornes = ([(-3.0, 3.0)] * (taille_base - 2) + [(-1.0, 1.0), (-BORNE_RHO, BORNE_RHO)]
               + [(-3.0, 3.0)] * (2 * nb_groupes))
 
-    solution = minimize(objectif, depart, method="L-BFGS-B", bounds=bornes,
+    solution = minimize(objectif, depart, method="L-BFGS-B", jac=True, bounds=bornes,
                         options={"maxiter": 800 if not nb_groupes else 3000, "ftol": 1e-10})
 
     att_d, att_e, def_d, def_e, gamma, rho = forces(solution.x)

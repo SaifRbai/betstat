@@ -187,3 +187,103 @@ def test_niveaux_de_groupe_preservent_l_ecart_entre_championnats() -> None:
     sans = ecart(dc.entrainer(matchs, xi=0.0))
     avec = ecart(dc.entrainer(matchs, xi=0.0, groupes=groupes))
     assert avec > sans + 0.3        # vrai ecart : 2.0 ; la penalite l'ecrasait
+
+
+def _avec_tirs(matchs: pd.DataFrame, graine: int = 3) -> pd.DataFrame:
+    """Tirs simules coherents avec les buts : environ 3 tirs cadres par but."""
+    generateur = np.random.default_rng(graine)
+    matchs = matchs.copy()
+    for cote in ("dom", "ext"):
+        cadres = matchs[f"buts_{cote}"] + generateur.poisson(2.5, len(matchs))
+        matchs[f"tirs_cadres_{cote}"] = cadres
+        matchs[f"tirs_{cote}"] = cadres + generateur.poisson(6.0, len(matchs))
+    return matchs
+
+
+def test_coefficients_tirs_plausibles() -> None:
+    matchs = _avec_tirs(_championnat_simule()[0])
+    a, b = dc.coefficients_tirs(matchs)
+    assert 0.1 < a < 0.6          # un tir cadre vaut bien plus qu'un tir non cadre
+    assert 0.0 <= b < a
+
+
+def test_cible_tirs_sans_colonnes_retombe_sur_les_buts() -> None:
+    matchs, *_ = _championnat_simule()
+    par_buts = dc.entrainer(matchs, cible="buts", xi=0.0)
+    par_tirs = dc.entrainer(matchs, cible="tirs", poids_xg=0.7, xi=0.0)
+    assert par_tirs.attaque == pytest.approx(par_buts.attaque)
+
+
+def test_cible_tirs_poids_nul_egal_buts_et_poids_plein_different() -> None:
+    matchs = _avec_tirs(_championnat_simule()[0])
+    par_buts = dc.entrainer(matchs, cible="buts", xi=0.0)
+    nul = dc.entrainer(matchs, cible="tirs", poids_xg=0.0, xi=0.0)
+    plein = dc.entrainer(matchs, cible="tirs", poids_xg=1.0, xi=0.0)
+    assert nul.attaque == pytest.approx(par_buts.attaque, abs=1e-5)
+    assert plein.attaque != pytest.approx(par_buts.attaque, abs=1e-3)
+    assert plein.convergence
+
+
+
+# -- cible "marche" : buts implicites des cotes ---------------------------------
+
+def _cotes_poisson(lam: float, mu: float, marge: float = 0.05) -> tuple[float, ...]:
+    """Cotes 1N2 et plus/moins 2.5 d'un marche Poisson exact, avec surcote."""
+    from scipy.stats import poisson
+
+    k = np.arange(12)
+    m = np.outer(poisson.pmf(k, lam), poisson.pmf(k, mu))
+    p1, pn, p2 = np.tril(m, -1).sum(), np.trace(m), np.triu(m, 1).sum()
+    po = m[np.add.outer(k, k) > 2.5].sum()
+    return tuple(1.0 / (p * (1 + marge)) for p in (p1, pn, p2, po, 1 - po))
+
+
+def test_buts_implicites_retrouve_les_intensites() -> None:
+    from modele.marche_implicite import buts_implicites
+
+    for lam, mu in ((1.55, 1.20), (2.40, 0.85), (0.90, 1.70)):
+        c = _cotes_poisson(lam, mu)
+        l, u = buts_implicites(*([x] for x in c))
+        assert l[0] == pytest.approx(lam, abs=0.02)
+        assert u[0] == pytest.approx(mu, abs=0.02)
+
+
+def test_buts_implicites_nan_si_cote_absente_ou_invalide() -> None:
+    from modele.marche_implicite import buts_implicites
+
+    c = _cotes_poisson(1.5, 1.2)
+    l, u = buts_implicites([c[0], np.nan, 1.0], [c[1]] * 3, [c[2]] * 3,
+                           [c[3]] * 3, [c[4]] * 3)
+    assert np.isfinite(l[0]) and np.isfinite(u[0])
+    assert np.isnan(l[1:]).all() and np.isnan(u[1:]).all()
+
+
+def test_cible_marche_sans_cotes_retombe_sur_les_buts() -> None:
+    matchs, *_ = _championnat_simule()
+    par_buts = dc.entrainer(matchs, cible="buts", xi=0.0, regularisation=0.3)
+    par_marche = dc.entrainer(matchs, cible="marche", xi=0.0)
+    assert par_marche.attaque == pytest.approx(par_buts.attaque)
+
+
+def test_cible_marche_apprend_des_cotes() -> None:
+    """Des cotes tirees des vraies forces doivent mieux les retrouver que les scores."""
+    matchs, attaques, defenses, gamma = _championnat_simule(nb_tours=2)
+    cotes = [_cotes_poisson(math.exp(attaques[r.dom] + defenses[r.ext] + gamma),
+                            math.exp(attaques[r.ext] + defenses[r.dom]))
+             for r in matchs.itertuples()]
+    for i, col in enumerate(("cote_1", "cote_N", "cote_2", "cote_plus25", "cote_moins25")):
+        matchs[col] = [c[i] for c in cotes]
+    def erreur(modele) -> float:
+        vrai = np.array([attaques[e] for e in modele.equipes])
+        return float(np.mean((np.array([modele.attaque[e] for e in modele.equipes])
+                              - (vrai - vrai.mean())) ** 2))
+    par_buts = dc.entrainer(matchs, cible="buts", xi=0.0)
+    par_marche = dc.entrainer(matchs, cible="marche", poids_xg=1.0, xi=0.0)
+    assert par_marche.convergence
+    assert erreur(par_marche) < 0.5 * erreur(par_buts)
+
+
+def test_defauts_par_cible() -> None:
+    assert dc.defauts_cible("marche")["regularisation"] == dc.REGULARISATION_MARCHE_DEFAUT
+    assert dc.defauts_cible("buts")["regularisation"] == dc.REGULARISATION_DEFAUT
+    assert dc.CIBLE_DEFAUT == "marche"

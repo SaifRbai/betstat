@@ -44,6 +44,8 @@ except ImportError as erreur:  # pragma: no cover - depend du systeme
     ) from erreur
 
 import config
+import pandas as pd
+import cli as cli_module
 from cli import entrainer_modele
 from data import cotes as cotes_module
 from data import noms as noms_module
@@ -402,8 +404,8 @@ class Application(tk.Tk):
                     width=5).grid(row=0, column=3, padx=4)
 
         ttk.Label(barre, text="Source").grid(row=0, column=4, padx=4)
-        self.var_source = tk.StringVar(value=self.preferences.get("source", "buts"))
-        ttk.Combobox(barre, values=["buts", "xg", "melange"], textvariable=self.var_source,
+        self.var_source = tk.StringVar(value=self.preferences.get("source", "marche"))
+        ttk.Combobox(barre, values=["marche", "buts", "xg", "melange", "tirs"], textvariable=self.var_source,
                      width=10, state="readonly").grid(row=0, column=5, padx=4)
 
         ttk.Button(barre, text="Charger", command=self.charger_donnees).grid(
@@ -432,7 +434,7 @@ class Application(tk.Tk):
                     f"({saisons} saisons, source {source}) ---\n")
 
         def tache() -> dict:
-            if source == "buts":
+            if source in ("buts", "tirs", "marche"):
                 matchs = resultats_module.charger(championnat, saisons)
                 rapport = None
             else:
@@ -608,18 +610,18 @@ class Application(tk.Tk):
     # Onglet 3 — Journee
     # ------------------------------------------------------------------
 
-    _COLONNES_JOURNEE = ("dom", "ext", "1", "N", "2", "+2.5", "+3.5",
+    _COLONNES_JOURNEE = ("date", "dom", "ext", "1", "N", "2", "+2.5", "+3.5",
                          "-2.5", "BTTS", "buts attendus")
 
     def _construire_journee(self, cadre: "ttk.Frame") -> None:
         barre = ttk.Frame(cadre)
         barre.pack(fill="x", padx=8, pady=8)
         ttk.Label(barre, text="Trier par").pack(side="left", padx=4)
-        self.var_filtre = tk.StringVar(value="favori")
+        self.var_filtre = tk.StringVar(value="date")
         ttk.Combobox(barre, textvariable=self.var_filtre, width=12, state="readonly",
-                     values=["favori", "+2.5", "+3.5", "-2.5", "BTTS"]).pack(side="left")
-        self.var_a_venir = tk.BooleanVar(value=False)
-        ttk.Checkbutton(barre, text="Seulement les matchs a venir",
+                     values=["date", "favori", "+2.5", "+3.5", "-2.5", "BTTS"]).pack(side="left")
+        self.var_a_venir = tk.BooleanVar(value=True)
+        ttk.Checkbutton(barre, text="Seulement les matchs des 7 prochains jours",
                         variable=self.var_a_venir).pack(side="left", padx=12)
         ttk.Button(barre, text="Calculer",
                    command=self.calculer_journee).pack(side="left", padx=10)
@@ -629,69 +631,57 @@ class Application(tk.Tk):
         conteneur = ttk.Frame(cadre)
         conteneur.pack(fill="both", expand=True, padx=8, pady=8)
         self.vue_journee = tableau(conteneur, self._COLONNES_JOURNEE,
-                                   {"dom": 150, "ext": 150})
-
-    def affiches_a_venir(self) -> list[tuple[str, str]]:
-        """Vraies affiches du flux de cotes, ramenees aux noms du modele.
-
-        Aucune requete supplementaire : on relit les cotes deja recuperees.
-        """
-        cotes = self.contexte.cotes
-        if cotes is None or cotes.empty:
-            return []
-        equipes = self.contexte.modele.equipes
-        couples = []
-        for ligne in cotes_module.matchs_a_venir(cotes).itertuples():
-            dom = noms_module.resoudre_vers(ligne.dom, equipes)
-            ext = noms_module.resoudre_vers(ligne.ext, equipes)
-            if dom is not None and ext is not None and dom != ext:
-                couples.append((dom, ext))
-        return couples
+                                   {"date": 120, "dom": 150, "ext": 150})
 
     def calculer_journee(self) -> None:
         if not self.contexte.pret():
             messagebox.showinfo("foot_edge", "Charge d'abord un championnat.")
             return
         modele = self.contexte.modele
+        matchs = self.contexte.matchs
+        championnat = self.contexte.championnat
         tri = self.var_filtre.get()
-        couples = None
-        if self.var_a_venir.get():
-            couples = self.affiches_a_venir()
-            if not couples:
-                messagebox.showinfo(
-                    "foot_edge",
-                    "Aucun match a venir connu : utilise d'abord 'Rafraichir les cotes' "
-                    "dans l'onglet Opportunites. Les affiches viennent de ce flux.")
-                return
+        a_venir = self.var_a_venir.get()
         self.occupe("Calcul des confrontations...")
 
         def tache() -> list[dict]:
-            duels = couples if couples is not None else [
-                (dom, ext) for dom in modele.equipes for ext in modele.equipes
-                if dom != ext]
-            lignes = []
-            for dom, ext in duels:
-                p = modele.predire(dom, ext)
-                lignes.append({
-                    "dom": dom, "ext": ext,
-                    "1": p["1N2"]["1"], "N": p["1N2"]["N"], "2": p["1N2"]["2"],
-                    "+2.5": p["totaux"]["plus_2.5"], "+3.5": p["totaux"]["plus_3.5"],
-                    "-2.5": p["totaux"]["moins_2.5"], "BTTS": p["btts"]["oui"],
-                    "buts attendus": p["buts_attendus"]["total"],
-                })
+            # Calendrier gratuit (0 credit), comme `cli.py journee` ; sinon
+            # affiches theoriques limitees aux equipes de la saison en cours,
+            # pour ne plus montrer les clubs relegues de l'historique.
+            calendrier = (cli_module._calendrier_journee(championnat, 7)
+                          if a_venir else pd.DataFrame())
+            if not calendrier.empty:
+                tableau = cli_module._tableau_calendrier(modele, calendrier)
+            else:
+                tableau = cli_module._tableau_confrontations(
+                    modele, cli_module.equipes_saison_en_cours(matchs))
+                tableau.insert(0, "date", "")
+            tableau = tableau.rename(columns={
+                "p1": "1", "pN": "N", "p2": "2", "plus25": "+2.5", "plus35": "+3.5",
+                "moins25": "-2.5", "btts": "BTTS", "buts_attendus": "buts attendus"})
+            lignes = tableau.to_dict("records")
+            if a_venir and not calendrier.empty and tri == "date":
+                return lignes
             cle = {"favori": "1"}.get(tri, tri)
-            return sorted(lignes, key=lambda l: l[cle], reverse=True)
+            if cle == "date":
+                cle = "buts attendus"
+            # Les matchs inestimables (NaN) passent en fin de liste.
+            return sorted(lignes, key=lambda l: (pd.isna(l[cle]), -(l[cle] if pd.notna(l[cle]) else 0)))
 
         self.travailleur.lancer("journee", tache, self._journee_calculee)
 
     def _journee_calculee(self, lignes: list[dict]) -> None:
         self.lignes_journee = lignes
+        def pct(v: Any) -> str:
+            return "—" if pd.isna(v) else f"{v:.1%}"
+
         remplir(self.vue_journee, [
-            (l["dom"], l["ext"], f"{l['1']:.1%}", f"{l['N']:.1%}", f"{l['2']:.1%}",
-             f"{l['+2.5']:.1%}", f"{l['+3.5']:.1%}", f"{l['-2.5']:.1%}",
-             f"{l['BTTS']:.1%}", f"{l['buts attendus']:.2f}")
+            (l["date"], l["dom"], l["ext"], pct(l["1"]), pct(l["N"]), pct(l["2"]),
+             pct(l["+2.5"]), pct(l["+3.5"]), pct(l["-2.5"]), pct(l["BTTS"]),
+             "—" if pd.isna(l["buts attendus"]) else f"{l['buts attendus']:.2f}")
             for l in lignes])
-        precision = "matchs a venir" if self.var_a_venir.get() else "confrontations"
+        precision = ("matchs a venir" if lignes and lignes[0]["date"]
+                     else "confrontations (saison en cours)")
         self.libre(f"{len(lignes)} {precision} calcules.")
 
     def exporter_journee(self) -> None:

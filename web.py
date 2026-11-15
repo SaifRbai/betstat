@@ -28,6 +28,7 @@ import re
 import socket
 import threading
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -78,7 +79,7 @@ STATIQUES = {
                          "application/vnd.android.package-archive"),
 }
 SAISONS = 4
-SOURCE = "buts"
+SOURCE = "marche"   # buts implicites des cotes des matchs joues (METHODE.md)
 # Pas de limite au nombre de matchs du combine du jour : il empile les favoris
 # jusqu'a l'objectif demande, aussi loin qu'il le faut (choix de l'utilisateur).
 MAX_JAMBES_COMBINE_JOUR: int | None = None
@@ -102,14 +103,64 @@ def aujourdhui() -> str:
     return _jour_local(datetime.now(timezone.utc))
 
 
-def _cotes_a_venir(cotes: pd.DataFrame, jour: date | None = None) -> pd.DataFrame:
-    """Tous les matchs du cache a partir de la date locale, sans limite de semaine."""
+def _cotes_a_venir(cotes: pd.DataFrame, jour: date | None = None,
+                   championnat: str | None = None) -> pd.DataFrame:
+    """Tous les matchs du cache a partir de la date locale, sans limite de semaine.
+
+    Avec `championnat`, les matchs qu'ESPN donne pour reportes ou annules sont
+    retires (voir `_sans_matchs_reportes`).
+    """
     if cotes.empty:
         return cotes
     debut = jour or date.fromisoformat(aujourdhui())
     dates = pd.to_datetime(cotes["date"], utc=True, errors="coerce")
     jours = dates.dt.tz_convert(_FUSEAU_LOCAL).dt.date
-    return cotes.loc[dates.notna() & (jours >= debut)].copy()
+    cotes = cotes.loc[dates.notna() & (jours >= debut)].copy()
+    if championnat is not None:
+        cotes = _sans_matchs_reportes(championnat, cotes)
+    return cotes
+
+
+# Ecart tolere entre l'heure des bookmakers et celle d'ESPN pour un meme match :
+# les deux sources ne s'accordent pas toujours (vu : 14h30 contre 20h00 UTC).
+ECART_MEME_MATCH = pd.Timedelta(hours=36)
+
+
+def _sans_matchs_reportes(championnat: str, cotes: pd.DataFrame) -> pd.DataFrame:
+    """Retire les matchs encore cotes qu'ESPN donne pour reportes ou annules.
+
+    The Odds API et les bookmakers gardent parfois au programme une journee
+    entiere deja reportee : la page affichait alors des pronostics pour des
+    matchs qui n'auront pas lieu. Un match n'est retire que si ESPN a la meme
+    affiche annulee a moins de 36 h, et aucune version reprogrammee dans cette
+    fenetre. Sans ESPN (pas d'identifiant, reseau coupe), rien n'est retire.
+    """
+    if cotes.empty or espn_module.slug(championnat) is None:
+        return cotes
+    dates = pd.to_datetime(cotes["date"], utc=True, errors="coerce")
+    depuis = (dates.min() - ECART_MEME_MATCH).to_pydatetime()
+    statuts = espn_module.statuts_autour(championnat, depuis)
+    if not any(s["annule"] for s in statuts):
+        return cotes
+
+    def meme_affiche(statut: dict, dom: str, ext: str, quand: pd.Timestamp) -> bool:
+        return (abs(pd.Timestamp(statut["coup_envoi"]) - quand) <= ECART_MEME_MATCH
+                and noms_module.resoudre_vers(statut["dom"], [dom]) is not None
+                and noms_module.resoudre_vers(statut["ext"], [ext]) is not None)
+
+    retires: set[tuple] = set()
+    for quand, dom, ext in {(d, str(a), str(b)) for d, a, b in
+                            zip(dates, cotes["dom"], cotes["ext"])}:
+        voisins = [s for s in statuts if meme_affiche(s, dom, ext, quand)]
+        if voisins and all(s["annule"] for s in voisins):
+            retires.add((quand, dom, ext))
+    if not retires:
+        return cotes
+    _journal.info("%s : %d match(s) reporte(s) selon ESPN retire(s) : %s", championnat,
+                  len(retires), ", ".join(f"{d} - {e}" for _, d, e in sorted(retires)))
+    garder = [(q, str(d), str(e)) not in retires
+              for q, d, e in zip(dates, cotes["dom"], cotes["ext"])]
+    return cotes.loc[garder].copy()
 
 
 def _bornes_du_jour(jour: str) -> tuple[str, str]:
@@ -138,6 +189,8 @@ def _avec_matchs_commences(championnat: str, cotes: pd.DataFrame,
     connus = set(zip(cotes["dom"], cotes["ext"])) if not cotes.empty else set()
     manquants = anciens[[(d, e) not in connus
                          for d, e in zip(anciens["dom"], anciens["ext"])]]
+    # Un match retire parce que reporte ne doit pas revenir par l'historique.
+    manquants = _sans_matchs_reportes(championnat, manquants)
     if manquants.empty:
         return cotes
     if cotes.empty:
@@ -647,6 +700,36 @@ def _stats_supplementaires(prediction: dict) -> dict:
     }
 
 
+def _completer_par_calendrier(championnat: str, a_venir: pd.DataFrame) -> pd.DataFrame:
+    """Ajoute les matchs programmes que le cache des cotes ne connait pas.
+
+    Le cache des cotes n'est rafraichi qu'a la demande (il coute des credits) :
+    vieux de quelques jours, il ignore les matchs publies depuis, et la page
+    n'en montrait qu'une partie. Le calendrier gratuit de The Odds API (0
+    credit, garde 3 h) donne la liste complete ; les matchs qu'il ajoute
+    portent 0 bookmaker et recoivent l'estimation du modele seul.
+    """
+    calendrier = cotes_module.calendrier_gratuit(championnat)
+    calendrier = _cotes_a_venir(calendrier, championnat=championnat)
+    if calendrier.empty:
+        return a_venir
+    if a_venir.empty:
+        return calendrier.reset_index(drop=True)
+    connus = [(pd.Timestamp(d), str(a), str(b))
+              for d, a, b in zip(a_venir["date"], a_venir["dom"], a_venir["ext"])]
+
+    def deja_cote(quand, dom: str, ext: str) -> bool:
+        return any(a == dom and b == ext and abs(q - pd.Timestamp(quand)) <= ECART_MEME_MATCH
+                   for q, a, b in connus)
+
+    nouveaux = calendrier[[not deja_cote(d, str(a), str(b)) for d, a, b in
+                           zip(calendrier["date"], calendrier["dom"], calendrier["ext"])]]
+    if nouveaux.empty:
+        return a_venir
+    return (pd.concat([a_venir, nouveaux], ignore_index=True)
+            .sort_values("date").reset_index(drop=True))
+
+
 def affiches(championnat: str,
              jour: str | None = None) -> tuple[list[dict], list[dict], float | None]:
     """Matchs a venir du flux de cotes, avec les estimations du modele.
@@ -664,7 +747,7 @@ def affiches(championnat: str,
     coupe = CACHE.coupe(championnat)
     comptes = resultats_module.nb_matchs_par_equipe(matchs_charges)
     cotes, age = cotes_module.lire_cache(championnat)
-    cotes = _cotes_a_venir(cotes)
+    cotes = _cotes_a_venir(cotes, championnat=championnat)
     if jour is not None:
         cotes = _avec_matchs_commences(championnat, cotes, jour)
     marche_devigge = _probabilites_de_marche(cotes)
@@ -676,7 +759,7 @@ def affiches(championnat: str,
     # Une ligue sans cotes tire son programme d'ESPN : sans lui, aucun match.
     sans_cotes = config.sans_cotes(championnat)
     a_venir = (_calendrier_sans_cotes(championnat, jour) if sans_cotes
-               else cotes_module.matchs_a_venir(cotes))
+               else _completer_par_calendrier(championnat, cotes_module.matchs_a_venir(cotes)))
     vus: set[tuple] = set()
     for ligne in a_venir.itertuples():
         if jour is not None and _jour_local(ligne.date) != jour:
@@ -739,6 +822,11 @@ def affiches(championnat: str,
                     for e in peu_de_donnees]
         absences = absences_cache.du_match(ligne.date, dom, ext, modele_du_match.equipes)
         reserves += _reserves_absences(absences, dom, ext)
+        if not sans_cotes and int(ligne.nb_bookmakers) == 0:
+            reserves.append(
+                "pas encore de cotes en cache pour ce match : probabilites du "
+                "modele seul, sans comparaison au marche. Rafraichis les cotes "
+                "pour les comparer")
         if sans_cotes:
             reserves.append(
                 "aucun bookmaker ne cote ce championnat : probabilites du modele "
@@ -854,7 +942,7 @@ def opportunites(championnat: str, bankroll: float, forcer: bool = False,
         cotes, age = cotes_module.recuperer(championnat, forcer=True), 0.0
     else:
         cotes, age = cotes_module.lire_cache(championnat)
-    cotes = _cotes_a_venir(cotes)
+    cotes = _cotes_a_venir(cotes, championnat=championnat)
     if not cotes.empty and jour is not None:
         cotes = cotes[cotes["date"].map(_jour_local) == jour]
     if cotes.empty:
@@ -968,11 +1056,22 @@ def ligues_du_jour(jour: str) -> list[str]:
     jour de semaine la moitie des ligues ne joue pas — les charger toutes pour
     n'en afficher que huit matchs serait payer dix-sept fois un calcul inutile.
     """
+    if jour >= aujourdhui():
+        # Calendriers gratuits (0 credit) : sans eux, une ligue dont le cache de
+        # cotes date de plusieurs jours manquait a la journee. En parallele :
+        # une cinquantaine d'appels a la suite feraient attendre la page.
+        with ThreadPoolExecutor(max_workers=4) as executeur:
+            list(executeur.map(cotes_module.calendrier_gratuit,
+                               config.COMPETITIONS_AVEC_COTES))
     codes = []
     for code in config.COMPETITIONS_AVEC_COTES:
         cotes, _ = cotes_module.lire_cache(code)
-        cotes = _cotes_a_venir(cotes)
+        cotes = _cotes_a_venir(cotes, championnat=code)
+        calendrier = _cotes_a_venir(cotes_module.calendrier_gratuit(code, reseau=False),
+                                    championnat=code)
         if not cotes.empty and (cotes["date"].map(_jour_local) == jour).any():
+            codes.append(code)
+        elif not calendrier.empty and (calendrier["date"].map(_jour_local) == jour).any():
             codes.append(code)
         elif any(_jour_local(d) == jour
                  for d in cotes_module.lire_evenements_en_cache(code)):

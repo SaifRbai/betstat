@@ -32,7 +32,7 @@ Methode = Literal["multiplicatif", "puissance", "shin"]
 
 GRILLE_XI = (0.0, 0.0005, 0.001, 0.002, 0.003, 0.005)
 GRILLE_W = (0.0, 0.3, 0.5, 0.7, 1.0)
-GRILLE_REGULARISATION = (0.0, 1.0, 3.0, 5.0, 8.0)
+GRILLE_REGULARISATION = (0.0, 0.3, 1.0, 3.0, 5.0, 8.0)
 GRILLE_A = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0)
 
 
@@ -101,9 +101,9 @@ def _ligne_prediction(match, probas: dict) -> dict:
 
 def predictions_walk_forward(
     matchs: pd.DataFrame,
-    cible: dc.Cible = "buts",
-    poids_xg: float = dc.POIDS_XG_DEFAUT,
-    xi: float = dc.XI_DEFAUT,
+    cible: dc.Cible = dc.CIBLE_DEFAUT,
+    poids_xg: float | None = None,
+    xi: float | None = None,
     force_domicile_separee: bool = False,
     frequence_reentrainement: int = 1,
     taille_initiale: int | None = None,
@@ -116,6 +116,9 @@ def predictions_walk_forward(
     `frequence_reentrainement` journees pour rester realiste sans exploser le
     temps de calcul.
     """
+    defauts = dc.defauts_cible(cible)
+    xi = defauts["xi"] if xi is None else xi
+    poids_xg = defauts["w"] if poids_xg is None else poids_xg
     matchs = matchs.dropna(subset=["date", "dom", "ext", "buts_dom", "buts_ext"])
     matchs = matchs.sort_values("date").reset_index(drop=True)
     if taille_initiale is None:
@@ -187,7 +190,7 @@ def _balayer_grille(matchs: pd.DataFrame, cible: dc.Cible, grille_xi, grille_w,
 def optimiser_hyperparametres(
     matchs: pd.DataFrame,
     championnat: str = "",
-    cible: dc.Cible = "buts",
+    cible: dc.Cible = dc.CIBLE_DEFAUT,
     grille_xi: Iterable[float] = GRILLE_XI,
     grille_w: Iterable[float] = GRILLE_W,
     frequence_reentrainement: int = 5,
@@ -206,7 +209,12 @@ def optimiser_hyperparametres(
             _journal.info("Hyperparametres repris du cache pour %s.", championnat)
             return cache
 
-    grille_w = list(grille_w) if cible == "melange" else [dc.POIDS_XG_DEFAUT]
+    if cible == "marche" and tuple(grille_w) == GRILLE_W:
+        grille_w = (0.5, 0.8, 1.0)
+    if cible == "marche" and tuple(grille_xi) == GRILLE_XI:
+        grille_xi = (0.002, 0.003, 0.004, 0.006)
+    grille_w = (list(grille_w) if cible in ("melange", "tirs", "marche")
+                else [dc.POIDS_XG_DEFAUT])
     grille_xi = list(grille_xi)
     # Un balayage a 30 combinaisons coute 5 fois plus cher qu'un balayage a 6 :
     # on espace les reentrainements pour rester dans les quelques minutes.
@@ -248,12 +256,14 @@ def _choisir_regularisation(matchs: pd.DataFrame, cible: dc.Cible, xi: float, w:
                             afficher: bool) -> tuple[float, float, list[dict]]:
     """Force du retrecissement L2, choisie a (xi, w) fixes sur la meme validation.
 
-    Le balayage (xi, w) a ete fait avec dc.REGULARISATION_DEFAUT : on reutilise
+    Le balayage (xi, w) a ete fait avec la regularisation par defaut de la
+    cible (dc.defauts_cible) : on reutilise
     son score pour cette valeur plutot que de la recalculer.
     """
-    grille = [{"regularisation": dc.REGULARISATION_DEFAUT, "log_loss": log_loss_defaut}]
+    defaut = dc.defauts_cible(cible)["regularisation"]
+    grille = [{"regularisation": defaut, "log_loss": log_loss_defaut}]
     for force in GRILLE_REGULARISATION:
-        if force == dc.REGULARISATION_DEFAUT:
+        if force == defaut:
             continue
         predictions = predictions_walk_forward(
             matchs, cible=cible, poids_xg=w, xi=xi,

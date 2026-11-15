@@ -249,6 +249,63 @@ def _chemin_evenements(championnat: str) -> Path:
     return config.DOSSIER_CACHE_COTES / f"{championnat.upper()}_evenements.json"
 
 
+NB_ESSAIS_EVENEMENTS = 3
+
+
+def _donnees_evenements(championnat: str, ttl: int) -> list | None:
+    """Le calendrier gratuit brut : depuis le disque s'il a moins de `ttl`
+    secondes, sinon depuis l'API (0 credit). None si on ne sait pas."""
+    info = config.COMPETITIONS.get(championnat.upper()) or {}
+    sport = info.get("odds")
+    if not sport:
+        return None
+    chemin = _chemin_evenements(championnat)
+    if chemin.exists() and time.time() - chemin.stat().st_mtime < ttl:
+        try:
+            return json.loads(chemin.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            pass
+    try:
+        # The Odds API limite la frequence des appels (429 EXCEEDED_FREQ_LIMIT,
+        # vu en vrai a 8 appels simultanes) : on reessaie apres une pause, sans
+        # quoi la ligue manquait en silence a la journee.
+        for essai in range(NB_ESSAIS_EVENEMENTS):
+            reponse = requests.get(URL_EVENEMENTS.format(sport=sport),
+                                   params={"apiKey": config.cle_api("odds"),
+                                           "dateFormat": "iso"},
+                                   timeout=DELAI_RESEAU)
+            if reponse.status_code != 429 or essai == NB_ESSAIS_EVENEMENTS - 1:
+                break
+            time.sleep(1.0 + essai)
+        reponse.raise_for_status()
+        # Les affiches sont gardees avec l'heure : elles servent a montrer les
+        # matchs du jour que le cache des cotes, plus vieux, ne connait pas.
+        donnees = [{"id": e.get("id"), "commence_time": e.get("commence_time"),
+                    "home_team": e.get("home_team"), "away_team": e.get("away_team")}
+                   for e in reponse.json()]
+    except Exception as erreur:              # inconnu, pas bloquant
+        _journal.warning("Calendrier gratuit %s indisponible : %s", championnat, erreur)
+        return None
+    config.creer_dossiers()
+    chemin.write_text(json.dumps(donnees), encoding="utf-8")
+    return donnees
+
+
+def _evenements_lisibles(donnees: list) -> list[dict]:
+    """(coup d'envoi, dom, ext) de chaque evenement ; dom et ext valent None
+    dans l'ancien format du cache, qui ne gardait que l'heure."""
+    triplets = [(b.get("commence_time"), b.get("home_team"), b.get("away_team"))
+                if isinstance(b, dict) else (b, None, None) for b in donnees or []]
+    if not triplets:
+        return []
+    # Une seule conversion pour toute la liste : appele par ligue a chaque
+    # affichage, element par element, cela coutait plusieurs secondes.
+    moments = pd.to_datetime(pd.Series([t[0] for t in triplets], dtype="object"),
+                             utc=True, errors="coerce", format="ISO8601")
+    return [{"date": moment, "dom": dom, "ext": ext}
+            for moment, (_, dom, ext) in zip(moments, triplets) if pd.notna(moment)]
+
+
 def evenements_a_venir(championnat: str, ttl: int = TTL_EVENEMENTS_SECONDES
                        ) -> list[datetime] | None:
     """Coups d'envoi a venir d'un championnat, via l'endpoint gratuit.
@@ -256,37 +313,12 @@ def evenements_a_venir(championnat: str, ttl: int = TTL_EVENEMENTS_SECONDES
     Renvoie None quand on ne sait pas (pas de cle, reseau coupe, erreur) :
     l'appelant se comporte alors comme avant, sans rien economiser.
     """
-    info = config.COMPETITIONS.get(championnat.upper()) or {}
-    sport = info.get("odds")
-    if not sport:
-        return None
-    chemin = _chemin_evenements(championnat)
-    donnees = None
-    if chemin.exists() and time.time() - chemin.stat().st_mtime < ttl:
-        try:
-            donnees = json.loads(chemin.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            donnees = None
+    donnees = _donnees_evenements(championnat, ttl)
     if donnees is None:
-        try:
-            reponse = requests.get(URL_EVENEMENTS.format(sport=sport),
-                                   params={"apiKey": config.cle_api("odds"),
-                                           "dateFormat": "iso"},
-                                   timeout=DELAI_RESEAU)
-            reponse.raise_for_status()
-            donnees = [e.get("commence_time") for e in reponse.json()]
-        except Exception as erreur:              # inconnu, pas bloquant
-            _journal.info("Calendrier gratuit %s indisponible : %s", championnat, erreur)
-            return None
-        config.creer_dossiers()
-        chemin.write_text(json.dumps(donnees), encoding="utf-8")
+        return None
     maintenant = datetime.now(timezone.utc)
-    dates = []
-    for brut in donnees:
-        moment = pd.to_datetime(brut, utc=True, errors="coerce")
-        if pd.notna(moment) and moment.to_pydatetime() > maintenant:
-            dates.append(moment.to_pydatetime())
-    return sorted(dates)
+    return sorted(e["date"].to_pydatetime() for e in _evenements_lisibles(donnees)
+                  if e["date"].to_pydatetime() > maintenant)
 
 
 def lire_evenements_en_cache(championnat: str) -> list[datetime]:
@@ -298,8 +330,32 @@ def lire_evenements_en_cache(championnat: str) -> list[datetime]:
         donnees = json.loads(chemin.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return []
-    dates = (pd.to_datetime(b, utc=True, errors="coerce") for b in donnees)
-    return sorted(d.to_pydatetime() for d in dates if pd.notna(d))
+    return sorted(e["date"].to_pydatetime() for e in _evenements_lisibles(donnees))
+
+
+def calendrier_gratuit(championnat: str, ttl: int = TTL_EVENEMENTS_SECONDES,
+                       reseau: bool = True) -> pd.DataFrame:
+    """Toutes les affiches connues du calendrier gratuit, au format de
+    `matchs_a_venir` avec `nb_bookmakers` a 0.
+
+    C'est la liste complete des matchs programmes, y compris ceux que le cache
+    des cotes ne contient pas encore (cache vieux de plusieurs jours, matchs
+    publies depuis). Sans `reseau`, ne lit que le disque. Ne leve jamais.
+    """
+    if reseau:
+        donnees = _donnees_evenements(championnat, ttl)
+    else:
+        chemin = _chemin_evenements(championnat)
+        try:
+            donnees = json.loads(chemin.read_text(encoding="utf-8")) if chemin.exists() else []
+        except json.JSONDecodeError:
+            donnees = []
+    lignes = [{**e, "nb_bookmakers": 0} for e in _evenements_lisibles(donnees or [])
+              if e["dom"] and e["ext"]]
+    if not lignes:
+        return pd.DataFrame(columns=["date", "dom", "ext", "nb_bookmakers"])
+    return (pd.DataFrame(lignes).drop_duplicates(subset=["date", "dom", "ext"])
+            .sort_values("date").reset_index(drop=True))
 
 
 def motif_appel_inutile(championnat: str) -> str | None:

@@ -323,3 +323,28 @@ def test_calendrier_inconnu_garde_le_comportement_d_avant(
     assert appels["n"] == 1
     cotes.recuperer_brut("F1", forcer=True, economiser=False)
     assert appels["n"] == 2
+
+
+def test_calendrier_gratuit_reessaie_apres_un_refus_de_frequence(monkeypatch):
+    """Vu en vrai : 429 EXCEEDED_FREQ_LIMIT a 8 appels simultanes."""
+    class Reponse:
+        def __init__(self, code, contenu):
+            self.status_code, self._contenu = code, contenu
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(self.status_code)
+        def json(self):
+            return self._contenu
+
+    reponses = [Reponse(429, {}), Reponse(200, [
+        {"id": "a1", "commence_time": "2026-11-06T19:00:00Z",
+         "home_team": "Dijon", "away_team": "Red Star"}])]
+    monkeypatch.setattr(cotes.requests, "get", lambda *a, **k: reponses.pop(0))
+    monkeypatch.setattr(cotes.time, "sleep", lambda _s: None)
+    calendrier = cotes.calendrier_gratuit("F2", ttl=0)
+    assert list(zip(calendrier["dom"], calendrier["ext"])) == [("Dijon", "Red Star")]
+    assert int(calendrier["nb_bookmakers"].iloc[0]) == 0
+    # L'ancien format du cache (heures seules) reste lisible.
+    cotes._chemin_evenements("F2").write_text('["2026-11-06T19:00:00Z"]', encoding="utf-8")
+    assert len(cotes.lire_evenements_en_cache("F2")) == 1
+    assert cotes.calendrier_gratuit("F2", reseau=False).empty

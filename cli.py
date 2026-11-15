@@ -77,7 +77,8 @@ def charger_donnees(championnat: str, saisons: int, source: str,
     entraine sur quatre saisons, mais l'est pour une validation qu'on relance
     justement pour integrer les derniers resultats.
     """
-    if source == "buts":
+    if source in ("buts", "tirs", "marche"):
+        # Tirs et cotes sont dans les CSV football-data : pas besoin des xG.
         return resultats_module.charger(championnat, saisons, forcer=forcer), None
     matchs, rapport = xg_module.charger_avec_xg(championnat, saisons)
     return matchs, rapport
@@ -85,10 +86,20 @@ def charger_donnees(championnat: str, saisons: int, source: str,
 
 def entrainer_modele(matchs: pd.DataFrame, source: str, championnat: str,
                      xi: float | None = None) -> dc.ModeleDixonColes:
-    cible = {"buts": "buts", "xg": "xg", "melange": "melange"}[source]
+    cible = {"buts": "buts", "xg": "xg", "melange": "melange", "tirs": "tirs",
+             "marche": "marche"}[source]
     parametres = calibration.charger_hyperparametres(championnat) or {}
-    xi_retenu = xi if xi is not None else parametres.get("xi", dc.XI_DEFAUT)
-    poids = parametres.get("w", dc.POIDS_XG_DEFAUT)
+    if parametres.get("cible") not in (None, cible):
+        if "marche" in (cible, parametres.get("cible")):
+            # Cible marche : xi et retrecissement n'ont pas le meme optimum que
+            # sur les scores ; on repart de ses propres valeurs par defaut.
+            parametres = {}
+        else:
+            # Le w calibre pour les xG ne vaut rien pour les tirs, et inversement.
+            parametres = {cle: v for cle, v in parametres.items() if cle != "w"}
+    defauts = dc.defauts_cible(cible)
+    xi_retenu = xi if xi is not None else parametres.get("xi", defauts["xi"])
+    poids = parametres.get("w", defauts["w"])
     return dc.entrainer(matchs, cible=cible, poids_xg=poids, xi=xi_retenu,
                         regularisation=parametres.get("regularisation"))
 
@@ -191,10 +202,26 @@ def commande_journee(args: argparse.Namespace) -> int:
     matchs, _ = charger_donnees(args.championnat, args.saisons, args.source)
     _verifier_donnees(matchs, args.championnat)
     modele = entrainer_modele(matchs, args.source, args.championnat)
-    tableau = _tableau_confrontations(modele)
+    calendrier = (pd.DataFrame() if args.toutes
+                  else _calendrier_journee(args.championnat, args.jours))
+    if not calendrier.empty:
+        tableau = _tableau_calendrier(modele, calendrier)
+        print(f"=== {config.nom_championnat(args.championnat)} : {len(tableau)} matchs "
+              f"programmes dans les {args.jours} prochains jours ===")
+    else:
+        actives = equipes_saison_en_cours(matchs)
+        tableau = _tableau_confrontations(modele, actives)
+        if not args.toutes:
+            print("Calendrier indisponible (ni The Odds API ni ESPN) : affiches "
+                  "theoriques entre les equipes de la saison en cours, pas la journee reelle.")
+        print(f"=== {config.nom_championnat(args.championnat)} : {len(actives)} equipes "
+              f"de la saison en cours, {len(tableau)} affiches possibles ===")
     tableau = _filtrer_journee(tableau, args.filtre)
     tableau = tableau.head(args.top)
-    print(tableau.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
+    print(tableau.to_string(index=False, float_format=lambda v: f"{v:.3f}", na_rep="—"))
+    if "dom" in tableau and tableau["p1"].isna().any():
+        print("\n— : equipe inconnue du modele (promue, ou nom non reconnu), "
+              "aucune estimation possible.")
     if args.export:
         chemin = Path(args.export)
         tableau.to_csv(chemin, index=False)
@@ -203,20 +230,69 @@ def commande_journee(args: argparse.Namespace) -> int:
     return 0
 
 
-def _tableau_confrontations(modele: dc.ModeleDixonColes) -> pd.DataFrame:
+def equipes_saison_en_cours(matchs: pd.DataFrame) -> list[str]:
+    """Equipes de la saison la plus recente de l'historique.
+
+    L'historique couvre plusieurs saisons : sans ce filtre, les clubs relegues
+    depuis (encore presents dans les donnees) apparaissent dans les affiches.
+    """
+    if "saison" in matchs.columns and matchs["saison"].notna().any():
+        derniere = matchs[matchs["saison"] == matchs["saison"].max()]
+    else:
+        derniere = matchs[matchs["date"] > matchs["date"].max() - pd.Timedelta(days=180)]
+    return sorted(set(derniere["dom"]) | set(derniere["ext"]))
+
+
+def _calendrier_journee(championnat: str, jours: int) -> pd.DataFrame:
+    """Matchs programmes entre maintenant et `jours` jours, sans consommer de
+    credit : calendrier gratuit de The Odds API, a defaut celui d'ESPN."""
+    from data import espn as espn_module
+    maintenant = pd.Timestamp.now(tz="UTC")
+    calendrier = cotes_module.calendrier_gratuit(championnat)
+    if calendrier.empty:
+        calendrier = espn_module.calendrier(championnat, maintenant.to_pydatetime())
+    if calendrier.empty:
+        return calendrier
+    dates = pd.to_datetime(calendrier["date"], utc=True)
+    garder = (dates >= maintenant - pd.Timedelta(hours=2)) & (dates <= maintenant + pd.Timedelta(days=jours))
+    return calendrier[garder].assign(date=dates[garder]).reset_index(drop=True)
+
+
+def _ligne_prediction(modele: dc.ModeleDixonColes, dom: str, ext: str) -> dict:
+    p = modele.predire(dom, ext)
+    return {
+        "p1": p["1N2"]["1"], "pN": p["1N2"]["N"], "p2": p["1N2"]["2"],
+        "plus25": p["totaux"]["plus_2.5"], "plus35": p["totaux"]["plus_3.5"],
+        "moins25": p["totaux"]["moins_2.5"], "btts": p["btts"]["oui"],
+        "buts_attendus": p["buts_attendus"]["total"],
+    }
+
+
+_COLONNES_PREDICTION = ("p1", "pN", "p2", "plus25", "plus35", "moins25", "btts", "buts_attendus")
+
+
+def _tableau_calendrier(modele: dc.ModeleDixonColes, calendrier: pd.DataFrame) -> pd.DataFrame:
+    """Une ligne par match programme ; probabilites vides si une equipe est
+    inconnue du modele, plutot que de l'ecarter en silence."""
     lignes = []
-    for dom in modele.equipes:
-        for ext in modele.equipes:
-            if dom == ext:
-                continue
-            p = modele.predire(dom, ext)
-            lignes.append({
-                "dom": dom, "ext": ext,
-                "p1": p["1N2"]["1"], "pN": p["1N2"]["N"], "p2": p["1N2"]["2"],
-                "plus25": p["totaux"]["plus_2.5"], "plus35": p["totaux"]["plus_3.5"],
-                "moins25": p["totaux"]["moins_2.5"], "btts": p["btts"]["oui"],
-                "buts_attendus": p["buts_attendus"]["total"],
-            })
+    for match in calendrier.itertuples(index=False):
+        dom = noms_module.resoudre_vers(match.dom, modele.equipes)
+        ext = noms_module.resoudre_vers(match.ext, modele.equipes)
+        ligne = {"date": match.date.tz_convert("Europe/Paris").strftime("%a %d/%m %H:%M"),
+                 "dom": dom or match.dom, "ext": ext or match.ext}
+        if dom and ext and dom != ext:
+            ligne.update(_ligne_prediction(modele, dom, ext))
+        else:
+            ligne.update(dict.fromkeys(_COLONNES_PREDICTION, float("nan")))
+        lignes.append(ligne)
+    return pd.DataFrame(lignes)
+
+
+def _tableau_confrontations(modele: dc.ModeleDixonColes,
+                            equipes: Sequence[str] | None = None) -> pd.DataFrame:
+    retenues = [e for e in modele.equipes if equipes is None or e in set(equipes)]
+    lignes = [{"dom": dom, "ext": ext, **_ligne_prediction(modele, dom, ext)}
+              for dom in retenues for ext in retenues if dom != ext]
     return pd.DataFrame(lignes)
 
 
@@ -226,7 +302,8 @@ _FILTRES = {
     "over35": lambda t: t.sort_values("plus35", ascending=False),
     "under25": lambda t: t.sort_values("moins25", ascending=False),
     "btts": lambda t: t.sort_values("btts", ascending=False),
-    "aucun": lambda t: t.sort_values("buts_attendus", ascending=False),
+    # Calendrier reel : ordre chronologique ; affiches theoriques : buts attendus.
+    "aucun": lambda t: t if "date" in t else t.sort_values("buts_attendus", ascending=False),
 }
 
 
@@ -582,8 +659,11 @@ def _ajouter_options_donnees(sous: argparse.ArgumentParser, saisons: int = 3) ->
                       help="code football-data : " + ", ".join(config.CODES_CHAMPIONNATS))
     sous.add_argument("--saisons", "-s", type=int, default=saisons,
                       help="nombre de saisons d'historique")
-    sous.add_argument("--source", default="buts", choices=("buts", "xg", "melange"),
-                      help="donnees d'entrainement du modele")
+    sous.add_argument("--source", default="marche",
+                      choices=("marche", "buts", "xg", "melange", "tirs"),
+                      help="donnees d'entrainement du modele ; marche = buts "
+                           "implicites des cotes des matchs joues (defaut) ; tirs = "
+                           "xG estimes par les tirs (tous championnats football-data)")
 
 
 def _sous_commandes_analyse(sous_analyseurs) -> None:
@@ -604,6 +684,10 @@ def _sous_commandes_analyse(sous_analyseurs) -> None:
     _ajouter_options_donnees(p)
     p.add_argument("--filtre", default="aucun", choices=tuple(_FILTRES))
     p.add_argument("--top", type=int, default=25)
+    p.add_argument("--jours", type=int, default=7,
+                   help="horizon du calendrier en jours (defaut 7 : la prochaine journee)")
+    p.add_argument("--toutes", action="store_true",
+                   help="toutes les affiches possibles de la saison en cours, pas le calendrier")
     p.add_argument("--export", help="chemin d'un CSV de sortie")
     p.set_defaults(fonction=commande_journee)
 

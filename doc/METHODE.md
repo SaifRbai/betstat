@@ -61,9 +61,9 @@ w_t = exp( -xi * nombre_de_jours_ecoules )
 d'environ **347 jours** (`ln 2 / 0.002`). Le choix de `xi` n'est pas fait a la
 main : voir section 3.
 
-### Cible d'entrainement : buts, xG, ou melange
+### Cible d'entrainement : buts, xG, melange, tirs ou marche
 
-`cible = "buts" | "xg" | "melange"`. En mode melange :
+`cible = "buts" | "xg" | "melange" | "tirs" | "marche"`. En mode melange :
 
 ```
 y = w * xg + (1 - w) * buts        (w = 0.7 par defaut)
@@ -86,6 +86,56 @@ Un modele entraine sur les xG converge avec 2 a 3 fois moins de matchs.
 La correction `tau` reste calculee sur les **buts entiers reellement marques**,
 meme quand la partie Poisson est entrainee sur les xG : `rho` decrit la
 dependance des scores observes, pas celle des xG.
+
+### Cible "marche" (defaut) : buts implicites des cotes des matchs joues
+
+Fichier : `modele/marche_implicite.py`. Pour chaque match **deja joue**, les
+cotes 1N2 et plus/moins 2.5 (moyenne football-data, de-vig multiplicatif) sont
+inversees en deux intensites de Poisson : le couple `(lambda, mu)` qui reproduit
+au mieux `P(1)`, `P(2)` et `P(plus de 2.5)`. Puis, comme pour les xG :
+
+```
+y = w * buts_implicites + (1 - w) * buts        (w = 0.8, xi = 0.004, r = 0.3)
+```
+
+Pourquoi : les cotes d'un match resument ce que le marche savait avant le coup
+d'envoi (compositions, blessures, forme), et sont bien moins bruitees que le
+score. Cible moins bruitee -> oubli plus rapide (`xi` plus eleve) et
+retrecissement plus faible (`r` plus petit) : d'ou des valeurs par defaut
+propres a cette cible (`dc.defauts_cible`).
+
+**Aucune fuite du futur** : seules les cotes de matchs anterieurs a la date
+predite entrent dans l'entrainement. Le match predit n'apporte jamais ses
+propres cotes. Un match sans cotes (source ESPN) garde ses buts reels.
+
+Ce que cela change : le modele n'est plus independant du marche passe. Il ne
+voit toujours pas les cotes du match a venir, donc un ecart modele/marche
+signale encore une divergence d'estimation, mais plus petite qu'avant.
+
+Log-loss 1N2 walk-forward, 4 saisons, reentrainement toutes les 3 journees.
+`buts` = ancienne configuration de l'interface web. Les quatre dernieres
+lignes n'ont servi a aucun reglage (validation independante) :
+
+| championnat | buts | marche | cotes de-viggees |
+|---|---|---|---|
+| Ligue 1 (F1) | 0.9872 | **0.9790** | 0.9661 |
+| Premier League (E0) | **1.0095** | 1.0102 | 0.9998 |
+| La Liga (SP1) | 0.9764 | **0.9679** | 0.9537 |
+| Serie A (I1) | 0.9694 | **0.9610** | 0.9462 |
+| Bundesliga (D1) | 0.9987 | **0.9838** | 0.9711 |
+| Eredivisie (N1) | 0.9988 | **0.9869** | 0.9791 |
+| Liga Portugal (P1) | 0.9398 | **0.9330** | 0.9268 |
+| Jupiler League (B1) | 1.0043 | **0.9945** | 0.9868 |
+| Championship (E1) | 1.0580 | **1.0486** | 1.0362 |
+| Ligue 2 (F2) | 1.0627 | **1.0550** | 1.0365 |
+
+Gain sur 9 championnats sur 10 (jusqu'a -0.015), neutre en Premier League.
+Le marche reste devant partout.
+
+Pistes essayees et rejetees sur le meme protocole : un niveau commun appris
+pour les promus (gain nul en moyenne, perte en Ligue 1), une decote
+supplementaire des saisons precedentes (perte partout), l'ajout de la
+deuxieme division a l'entrainement (perte nette en Premier League et Serie A).
 
 ### Estimation
 

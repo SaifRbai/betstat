@@ -398,11 +398,18 @@ def analyser_dates(brutes: pd.Series) -> pd.Series:
 
 
 def _premiere_colonne(df: pd.DataFrame, candidates: tuple[str, ...]) -> pd.Series:
-    """Premiere colonne existante et non vide parmi les candidates."""
+    """Premiere cote valide (> 1.0) parmi les candidates.
+
+    Une cote decimale est toujours strictement superieure a 1. Les CSV en
+    contiennent parfois de fausses (vu en vrai : -0.25 sur un plus/moins de 2.5
+    buts) : elles sont traitees comme absentes, pour que la colonne suivante
+    prenne le relais au lieu de faire planter le de-vig plus loin.
+    """
     valeurs = pd.Series(float("nan"), index=df.index, dtype="float64")
     for nom in candidates:
         if nom in df.columns:
             colonne = pd.to_numeric(df[nom], errors="coerce")
+            colonne = colonne.where(colonne > 1.0)
             valeurs = valeurs.where(valeurs.notna(), colonne)
     return valeurs
 
