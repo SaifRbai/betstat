@@ -25,6 +25,7 @@
     --jauge-court: #b45309; --jauge-court-piste: #fde68a;
     --juste: #d3f9d8; --juste-encre: #1b5e20;
     --rate: #ffd6d6; --rate-encre: #a11212;
+    --risque: #7c3aed; --risque-fond: #f5f0ff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -35,6 +36,7 @@
       --jauge-court: #fbbf24; --jauge-court-piste: #4a3410;
       --juste: #1e4620; --juste-encre: #86c98b;
       --rate: #4a1c1c; --rate-encre: #f4a3a3;
+      --risque: #c4b5fd; --risque-fond: #261d3d;
     }
   }
   * { box-sizing: border-box; }
@@ -231,6 +233,19 @@
   }
   .choix-sur.fragile-choix { border-color: #c77700; }
   .choix-sur.aucun { border-color: var(--trait); color: var(--doux); }
+  /* Choix a risque : ce que le modele jouerait quand rien n'est « sur ».
+     Couleur a part pour qu'on ne le confonde jamais avec un choix sur. */
+  .choix-sur.risque { border: 2px dashed var(--risque); background: var(--risque-fond); }
+  .choix-sur.risque .tete { color: var(--risque); font-weight: 700; }
+  .choix-sur.risque .pari { color: var(--risque); }
+  .choix-sur.tres-sur { border: 2px solid #1b6e3c; background: rgba(27, 110, 60, .07); }
+  .choix-sur.tres-sur .tete { color: #1b6e3c; font-weight: 700; }
+  .choix-sur.tres-sur .pari { color: #1b6e3c; }
+  .choix-sur.prudent { border-color: #2e7d5b; }
+  .choix-sur.prudent .tete { color: #2e7d5b; font-weight: 700; }
+  .choix-sur.prudent ul { margin: 4px 0 0; padding-left: 18px; }
+  .choix-sur.prudent li { margin: 2px 0; }
+  .choix-sur.prudent .note { color: var(--doux); font-size: 12px; }
   .choix-sur .tete { font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
     color: var(--doux); margin-bottom: 2px; }
   .choix-sur .pari { font-size: 15px; font-weight: 700; }
@@ -676,6 +691,19 @@
       <button type="button" data-heures="2" aria-pressed="false">2 h <span class="n"></span></button>
       <button type="button" data-heures="6" aria-pressed="false">6 h <span class="n"></span></button>
       <button type="button" data-heures="8" aria-pressed="false">8 h <span class="n"></span></button>
+    </div>
+    <!-- Par type de choix : la meme categorie que l'en-tete de la case de la
+         carte (« Choix le plus sur » ou « Choix a risque »). -->
+    <div id="filtre-choix" class="filtre-statut filtre-heures" role="group"
+         aria-label="Filtrer par type de choix" hidden>
+      <span class="titre-filtre">Choix :</span>
+      <button type="button" data-choix="" aria-pressed="true">Tous les matchs <span class="n"></span></button>
+      <button type="button" data-choix="sur" aria-pressed="false">Choix le plus sur — pas sans risque <span class="n"></span></button>
+      <button type="button" data-choix="risque" aria-pressed="false">Choix a risque — peut passer, pas sur <span class="n"></span></button>
+      <button type="button" data-choix="tres_sur" aria-pressed="false"
+              title="Une seule selection par match, tous marches confondus, a 85 % au moins en probabilite prudente. Tres probable, jamais certain.">Le plus sur de tous — presque sans risque, jamais certain <span class="n"></span></button>
+      <button type="button" data-choix="prudent" aria-pressed="false"
+              title="Resultat, buts, cartons, corners : la selection la plus probable de chaque marche, classee par probabilite prudente. Aucun pari n'est sans risque.">Risque minimal — les plus probables (resultat, buts, cartons, corners) <span class="n"></span></button>
     </div>
     <div id="matchs"></div>
     <div id="rapport-ligues" class="progression" hidden></div>
@@ -1458,6 +1486,7 @@ function blocChoixSur(m) {
   const c = m.choix_sur;
   if (c === undefined) return "";
   if (!c || !c.choix) {
+    if (c && c.choix_risque) return blocChoixRisque(c);
     return `<div class="choix-sur aucun"><div class="tete">Choix le plus sur</div>
       Aucun : ${c ? c.explication : "pas de cotes pour ce match"}. Match a eviter.</div>`;
   }
@@ -1486,6 +1515,73 @@ function blocChoixSur(m) {
       echoue 1 fois sur <b>${Math.round(x.echoue_1_fois_sur)}</b> — ${esperance}.</div>
     <div class="comment">Comment : ${x.comment}.</div>
     ${autres}${garde}
+  </div>`;
+}
+
+// Pas de choix sur, mais le modele a quand meme une preference : on la montre,
+// en violet et en pointilles, avec la raison pour laquelle elle n'est pas sure.
+function blocChoixRisque(c) {
+  const x = c.choix_risque;
+  const prix = x.cote_reelle
+    ? `@ ${x.cote.toFixed(2)}`
+    : `— cote equitable ${x.cote.toFixed(2)} (pas de cote bookmaker : joue seulement si on te propose plus)`;
+  const marche = x.p_marche !== null && x.p_marche !== undefined
+    ? `, marche ${pourcent(x.p_marche)}${x.desaccord_marche ? " — le marche n'est pas d'accord" : ""}`
+    : ", pas de marche";
+  const esperance = x.esperance === null || x.esperance === undefined ? ""
+    : (x.esperance >= 0 ? ` — rapporte en moyenne +${(x.esperance * 100).toFixed(1)} %`
+                        : ` — coute en moyenne ${(x.esperance * 100).toFixed(1)} %`);
+  return `<div class="choix-sur risque">
+    <div class="tete">Choix a risque — peut passer, pas sur</div>
+    <div class="pari">${x.libelle} ${prix}</div>
+    <div class="chiffres">Passe <b>${pourcent(x.p_finale)}</b> du temps
+      (modele ${pourcent(x.p_modele)}${marche}) —
+      echoue 1 fois sur <b>${x.echoue_1_fois_sur.toFixed(1)}</b>${esperance}.</div>
+    <div class="mise-en-garde">Pas de choix sur pour ce match : ${c.explication}.
+      C'est la preference du modele, a petite mise ou a eviter.</div>
+  </div>`;
+}
+
+// Les plus probables tous marches confondus : une ligne par famille (resultat,
+// buts, corners, cartons). La probabilite affichee est la probabilite PRUDENTE
+// (melange avec le marche, ou modele ramene vers 50 % quand rien ne le
+// verifie) : c'est elle qui classe, pas l'estimation brute du modele.
+function blocPrudent(m) {
+  const s = m.selection_prudente;
+  if (!s || !(s.selections || []).length) return "";
+  const nomFamille = { resultat: "Resultat", buts: "Buts" };
+  const lignes = s.selections.map((x) => `<li><b>${x.libelle}</b>
+      — ${nomFamille[x.famille] || x.famille} — passe <b>${pourcent(x.p_prudente)}</b>
+      (modele ${pourcent(x.p_modele)}${x.p_marche !== null && x.p_marche !== undefined
+        ? `, marche ${pourcent(x.p_marche)}` : ""})
+      — echoue 1 fois sur ${x.echoue_1_fois_sur.toFixed(1)}
+      — cote equitable ${x.cote_equitable.toFixed(2)}
+      <div class="note">${x.note}</div></li>`).join("");
+  return `<div class="choix-sur prudent">
+    <div class="tete">Risque minimal — les plus probables, pas sans risque</div>
+    <ul>${lignes}</ul>
+    <div class="mise-en-garde">Ne joue que si le bookmaker offre plus que la cote
+      equitable. Combiner ces selections multiplie les risques d'echec.</div>
+  </div>`;
+}
+
+// La case « le plus sur de tous » : UNE selection, la plus probable du match
+// tous marches confondus (resultat, buts, cartons, corners), a 85 % prudents
+// au moins. Sa frequence d'echec reste affichee : presque sur n'est pas sur.
+function blocTresSur(m) {
+  const s = m.selection_prudente;
+  const x = s && s.le_plus_sur;
+  if (!x) return "";
+  const nomFamille = { resultat: "resultat", buts: "buts" };
+  return `<div class="choix-sur tres-sur">
+    <div class="tete">Le plus sur de tous — presque sans risque, jamais certain</div>
+    <div class="pari">${x.libelle} — cote equitable ${x.cote_equitable.toFixed(2)}</div>
+    <div class="chiffres">${nomFamille[x.famille] || x.famille} — passe
+      <b>${pourcent(x.p_prudente)}</b> du temps (modele ${pourcent(x.p_modele)}${
+      x.p_marche !== null && x.p_marche !== undefined ? `, marche ${pourcent(x.p_marche)}` : ""})
+      — echoue 1 fois sur <b>${x.echoue_1_fois_sur.toFixed(0)}</b>, et cette perte
+      annule environ ${Math.round(x.p_prudente / (1 - x.p_prudente))} gains.</div>
+    <div class="comment">${x.note}.</div>
   </div>`;
 }
 
@@ -1533,6 +1629,8 @@ function carteMatch(m) {
       <div class="secondaire"><span>1 domicile</span><span>N nul</span><span>2 exterieur</span></div>
     </div>
     ${blocChoixSur(m)}
+    ${blocTresSur(m)}
+    ${blocPrudent(m)}
     ${ligneProno(m)}
     ${lignesAnnexes(m)}
     ${ligneAbsences(m)}
@@ -1616,6 +1714,57 @@ function afficherFiltreHeures(matchs) {
     bouton.setAttribute("aria-pressed", String(h === HEURES));
   }
   return matchs.filter((m) => dansLaFenetre(m.date, HEURES));
+}
+
+let CHOIX = "";               // type de choix retenu ; vide = tous les matchs
+
+// La categorie que la carte affiche dans sa case de choix (voir blocChoixSur) :
+// « sur » si elle titre « Choix le plus sur », « risque » si elle titre
+// « Choix a risque », vide sinon (pas de cotes, aucun choix).
+function categorieChoix(m) {
+  const c = m.choix_sur;
+  if (!c) return "";
+  if (c.choix) return "sur";
+  if (c.choix_risque) return "risque";
+  return "";
+}
+
+// « prudent » ne remplace pas la categorie de la case de choix : un match peut
+// etre a la fois « sur » et porter des selections a risque minimal.
+const aSelectionPrudente = (m) =>
+  !!(m.selection_prudente && (m.selection_prudente.selections || []).length);
+const aTresSur = (m) => !!(m.selection_prudente && m.selection_prudente.le_plus_sur);
+const pTresSur = (m) => aTresSur(m) ? m.selection_prudente.le_plus_sur.p_prudente : 0;
+const meilleurePrudente = (m) => (m.selection_prudente && m.selection_prudente.meilleure) || 0;
+
+function afficherFiltreChoix(matchs) {
+  const barre = $("filtre-choix");
+  const nombres = { "": matchs.length, sur: 0, risque: 0, prudent: 0, tres_sur: 0 };
+  for (const m of matchs) {
+    const cle = categorieChoix(m);
+    if (cle) nombres[cle] += 1;
+    if (aSelectionPrudente(m)) nombres.prudent += 1;
+    if (aTresSur(m)) nombres.tres_sur += 1;
+  }
+  barre.hidden = !matchs.length;
+  for (const bouton of barre.querySelectorAll("button")) {
+    const cle = bouton.dataset.choix;
+    bouton.querySelector(".n").textContent = nombres[cle];
+    bouton.disabled = cle !== "" && !nombres[cle] && cle !== CHOIX;
+    bouton.setAttribute("aria-pressed", String(cle === CHOIX));
+  }
+  if (CHOIX === "tres_sur") {
+    return matchs.filter(aTresSur)
+      .sort((a, b) => jourDe(a.date).localeCompare(jourDe(b.date)) || pTresSur(b) - pTresSur(a));
+  }
+  if (CHOIX === "prudent") {
+    // Jour par jour (la liste est regroupee par journee), puis les matchs dont
+    // la meilleure selection est la plus probable en premier.
+    return matchs.filter(aSelectionPrudente)
+      .sort((a, b) => jourDe(a.date).localeCompare(jourDe(b.date))
+                      || meilleurePrudente(b) - meilleurePrudente(a));
+  }
+  return CHOIX ? matchs.filter((m) => categorieChoix(m) === CHOIX) : matchs;
 }
 
 // --- Rafraichissement automatique du direct ---------------------------------
@@ -1710,7 +1859,7 @@ function filtrer() {
   if (!ETAT) return;
   const jour = $("jour").value;
   const duJour = jour ? ETAT.matchs.filter((m) => jourDe(m.date) === jour) : ETAT.matchs;
-  const matchs = afficherFiltreHeures(afficherFiltreStatut(duJour));
+  const matchs = afficherFiltreChoix(afficherFiltreHeures(afficherFiltreStatut(duJour)));
   const lignes = (jour
     ? ETAT.opportunites.filter((o) => jourDe(o.date) === jour) : ETAT.opportunites)
     .filter((o) => dansLaFenetre(o.date, HEURES));
@@ -2844,6 +2993,9 @@ async function demarrer() {
   }
   for (const bouton of $("filtre-heures").querySelectorAll("button")) {
     bouton.addEventListener("click", () => { HEURES = Number(bouton.dataset.heures); filtrer(); });
+  }
+  for (const bouton of $("filtre-choix").querySelectorAll("button")) {
+    bouton.addEventListener("click", () => { CHOIX = bouton.dataset.choix; filtrer(); });
   }
   // Changer de jour depuis l'onglet ouvert : la liste doit suivre.
   $("jour").addEventListener("change", () => {

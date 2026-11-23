@@ -234,3 +234,112 @@ def test_sous_le_seuil_il_n_y_a_pas_de_choix_sur():
     pred = {"1N2": {"1": 0.40, "N": 0.30, "2": 0.30}, "double_chance": {}, "totaux": {}}
     r = confiance.choix_le_plus_sur(pred, "A", "B", {}, {"1": 2.4, "N": 3.3, "2": 3.3}, [])
     assert r["choix"] is None and "60" in r["explication"]
+
+
+def test_sans_cotes_un_choix_a_risque_est_propose_au_prix_equitable():
+    from paris import confiance
+    pred = {"1N2": {"1": 0.25, "N": 0.34, "2": 0.41},
+            "double_chance": {"1N": 0.59, "12": 0.66, "N2": 0.75},
+            "totaux": {"plus_2.5": 0.45, "moins_2.5": 0.55}}
+    r = confiance.choix_le_plus_sur(pred, "A", "B", {}, {}, [])
+    assert r["choix"] is None                      # le choix sur reste vide
+    risque = r["choix_risque"]
+    assert risque["selection"] == "N2" and risque["cote_reelle"] is False
+    assert abs(risque["cote"] - round(1 / 0.75, 2)) < 1e-9
+    assert risque["esperance"] is None             # pas de prix reel, pas d'esperance
+
+
+def test_sous_le_seuil_le_choix_a_risque_garde_la_cote_reelle():
+    from paris import confiance
+    pred = {"1N2": {"1": 0.40, "N": 0.30, "2": 0.30}, "double_chance": {}, "totaux": {}}
+    r = confiance.choix_le_plus_sur(pred, "A", "B", {}, {"1": 2.4, "N": 3.3, "2": 3.3}, [])
+    assert r["choix"] is None
+    assert r["choix_risque"]["selection"] == "1"
+    assert r["choix_risque"]["cote"] == 2.4 and r["choix_risque"]["cote_reelle"] is True
+
+
+def test_un_choix_sur_n_a_pas_de_choix_a_risque():
+    from paris import confiance
+    cotes = {"1": 1.60, "N": 4.20, "2": 5.80}
+    r = confiance.choix_le_plus_sur(_prediction_sure(), "A", "B", {}, cotes, [])
+    assert r["choix"] is not None and "choix_risque" not in r
+
+
+# --------------------------------------------------------------------------
+# selection_prudente : les plus probables, tous marches confondus
+# --------------------------------------------------------------------------
+
+ANNEXE_CORNERS = {
+    "libelle_compte": "corners", "type": "corners", "dispersion": 1.05,
+    "reserves": [confiance.RESERVE_SANS_MARCHE], "validation": None,
+    "tous_les_totaux": [
+        {"ligne": 7.5, "plus": 0.82, "moins": 0.18},
+        {"ligne": 9.5, "plus": 0.55, "moins": 0.45},
+        {"ligne": 12.5, "plus": 0.08, "moins": 0.92},
+    ],
+}
+
+
+def test_selection_prudente_une_ligne_par_famille_et_jouable() -> None:
+    pronos = confiance.lister(PREDICTION, "Lyon", "Nice")
+    sel = confiance.selection_prudente(pronos, [ANNEXE_CORNERS])
+    familles = [s["famille"] for s in sel["selections"]]
+    assert len(familles) == len(set(familles))
+    for s in sel["selections"]:
+        assert s["p_prudente"] >= confiance.SEUIL_PRUDENT
+        assert s["cote_equitable"] >= confiance.COTE_MINIMALE_SURE
+    # « Plus de 0.5 buts » a 95 % n'est pas jouable (cote equitable < 1.20).
+    assert all(s["libelle"] != "Plus de 0.5 buts" for s in sel["selections"])
+    probas = [s["p_prudente"] for s in sel["selections"]]
+    assert probas == sorted(probas, reverse=True)
+
+
+def test_selection_prudente_ramene_les_estimations_non_verifiees_vers_50() -> None:
+    pronos = confiance.lister(PREDICTION, "Lyon", "Nice")
+    sel = confiance.selection_prudente(pronos, [ANNEXE_CORNERS])
+    corners = [s for s in sel["selections"] if s["famille"] == "corners"]
+    assert corners and corners[0]["p_prudente"] < corners[0]["p_modele"]
+    assert corners[0]["verifie_par_le_marche"] is False
+
+
+def test_selection_prudente_ecarte_ce_que_le_marche_conteste() -> None:
+    pronos = confiance.lister(PREDICTION, "Lyon", "Nice")
+    ecart = config.SEUIL_DIVERGENCE_ALERTE + 0.05
+    # Le marche voit Lyon ou nul bien moins probable que le modele.
+    p_marche = {("1N2", "1"): 0.55 - ecart, ("1N2", "N"): 0.25, ("1N2", "2"): 0.20 + ecart}
+    sel = confiance.selection_prudente(pronos, [], p_marche)
+    assert all(s["selection"] != "1N" for s in sel["selections"])
+
+
+def test_selection_prudente_se_tait_sous_reserve() -> None:
+    pronos = confiance.lister(PREDICTION, "Lyon", "Nice")
+    sel = confiance.selection_prudente(pronos, [ANNEXE_CORNERS],
+                                       reserves_communes=["Nice n'a que 2 match(s)"])
+    assert sel["selections"] == []
+    assert "reserve" in sel["explication"]
+
+
+def test_le_plus_sur_de_tous_est_unique_tres_probable_et_pas_trivial() -> None:
+    fermee = {**PREDICTION, "totaux": {**PREDICTION["totaux"],
+                                       "plus_3.5": 0.07, "moins_3.5": 0.93,
+                                       "plus_4.5": 0.02, "moins_4.5": 0.98}}
+    pronos = confiance.lister(fermee, "Lyon", "Nice")
+    sel = confiance.selection_prudente(pronos, [ANNEXE_CORNERS])
+    x = sel["le_plus_sur"]
+    assert x is not None
+    assert x["p_prudente"] >= confiance.SEUIL_TRES_SUR
+    assert x["cote_equitable"] >= confiance.COTE_MINIMALE_TRES_SUR
+    # Moins de 4.5 (98 %) et plus de 0.5 sont trop triviaux : la cote ne paie rien.
+    assert x["libelle"] == "Moins de 3.5 buts"
+
+
+def test_pas_de_plus_sur_de_tous_quand_rien_n_atteint_le_seuil() -> None:
+    pronos = confiance.lister(PREDICTION, "Lyon", "Nice")
+    assert confiance.selection_prudente(pronos, [ANNEXE_CORNERS])["le_plus_sur"] is None
+
+
+def test_le_plus_sur_de_tous_absent_sous_reserve() -> None:
+    pronos = confiance.lister(PREDICTION, "Lyon", "Nice")
+    sel = confiance.selection_prudente(pronos, [ANNEXE_CORNERS],
+                                       reserves_communes=["peu de donnees"])
+    assert sel["le_plus_sur"] is None

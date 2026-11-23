@@ -860,6 +860,7 @@ def affiches(championnat: str,
                 p, dom, ext, p_marche, meilleures, reserves, poids_modele),
             "pronos_annexes": [] if inter is not None else _pronos_annexes(
                 modeles_annexes, dom, ext, reserves, championnat),
+            "selection_prudente": None,
             "inter_divisions": inter,
             "coupe": coupe,
             "absences": absences,
@@ -872,6 +873,10 @@ def affiches(championnat: str,
                 confiance_module.les_plus_surs(pronos)),
             "peu_de_donnees": peu_de_donnees,
         })
+        # Les plus probables tous marches confondus : calcule apres coup parce
+        # qu'il lit les pronos annexes deja produits pour la carte.
+        lignes[-1]["selection_prudente"] = confiance_module.selection_prudente(
+            pronos, lignes[-1]["pronos_annexes"], p_marche, reserves, poids_modele)
         # Le match est-il joue, et sait-on ce qu'il a donne ?
         coup_envoi = pd.Timestamp(ligne.date)
         if coup_envoi.tzinfo is None:

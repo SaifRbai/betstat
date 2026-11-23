@@ -270,6 +270,66 @@ def _melange(p_modele: float, p_marche: float | None, a: float) -> float:
         np.array([p_modele, 1 - p_modele]), np.array([p_marche, 1 - p_marche]), a)[0])
 
 
+def choix_risque(prediction: dict, dom: str, ext: str,
+                 p_marche: dict[tuple[str, str], float] | None = None,
+                 meilleures_cotes: dict[str, float] | None = None,
+                 a_melange: float = 0.3) -> dict | None:
+    """Le pari le plus probable selon le modele, quand le choix « sur » n'existe pas.
+
+    Affiche a part, dans une autre couleur : ce n'est PAS un choix sur. Il ne
+    passe aucun des filtres de `choix_le_plus_sur` (accord avec le marche,
+    seuil de 60 %), il dit seulement ce que le modele jouerait. Sans cote
+    connue, le prix affiche est la cote equitable du modele (1/p) : a comparer
+    avec celle du bookmaker, pas a jouer telle quelle.
+
+    Jamais repris dans la liste des pronos surs (`pronos_surs` lit `choix`).
+    """
+    p_marche = p_marche or {}
+    cotes = meilleures_cotes or {}
+    issues = prediction.get("1N2") or {}
+    totaux = prediction.get("totaux") or {}
+    doubles = prediction.get("double_chance") or {}
+
+    candidats: list[dict] = []
+
+    def ajouter(marche, selection, libelle, p_mod, p_mar, cote):
+        if not p_mod or p_mod <= 0:
+            return
+        p_mod = float(p_mod)
+        reelle = bool(cote)
+        p_fin = _melange(p_mod, p_mar, a_melange)
+        prix = float(cote) if reelle else 1.0 / p_fin
+        if prix < COTE_MINIMALE_SURE:
+            return
+        candidats.append({
+            "marche": marche, "selection": selection, "libelle": libelle,
+            "p_modele": p_mod, "p_marche": p_mar, "p_finale": p_fin,
+            "cote": round(prix, 2), "cote_reelle": reelle,
+            "esperance": p_fin * prix - 1.0 if reelle else None,
+            "echoue_1_fois_sur": 1.0 / max(1.0 - p_fin, 1e-9),
+            "desaccord_marche": (p_mar is not None
+                                 and abs(p_mod - p_mar) > config.SEUIL_DIVERGENCE_ALERTE),
+        })
+
+    for sel in ("1", "N", "2"):
+        ajouter("1N2", sel, _LIBELLES_1N2[sel].format(dom=dom, ext=ext),
+                issues.get(sel), p_marche.get(("1N2", sel)), cotes.get(sel))
+    for sel, libelle in (("plus", "Plus de 2.5 buts"), ("moins", "Moins de 2.5 buts")):
+        ajouter("totaux 2.5", sel, libelle, totaux.get(f"{sel}_2.5"),
+                p_marche.get(("plus_moins_2.5", sel)), cotes.get(sel))
+    for sel, (a, b) in _DOUBLES_CHANCES.items():
+        ca, cb = cotes.get(a), cotes.get(b)
+        pa, pb = p_marche.get(("1N2", a)), p_marche.get(("1N2", b))
+        ajouter("double chance", sel, _LIBELLES_DC[sel].format(dom=dom, ext=ext),
+                doubles.get(sel), None if pa is None or pb is None else pa + pb,
+                1.0 / (1.0 / ca + 1.0 / cb) if ca and cb else None)
+
+    if not candidats:
+        return None
+    candidats.sort(key=lambda c: c["p_finale"], reverse=True)
+    return candidats[0]
+
+
 def choix_le_plus_sur(prediction: dict, dom: str, ext: str,
                       p_marche: dict[tuple[str, str], float] | None = None,
                       meilleures_cotes: dict[str, float] | None = None,
@@ -342,6 +402,8 @@ def choix_le_plus_sur(prediction: dict, dom: str, ext: str,
 
     if not candidats:
         return {"choix": None, "alternatives": [], "sur": False, "reserves": reserves,
+                "choix_risque": choix_risque(prediction, dom, ext, p_marche, cotes,
+                                             a_melange),
                 "explication": "aucun marche cote au-dessus de "
                                f"{COTE_MINIMALE_SURE:.2f} sur lequel modele et "
                                "marche s'accordent"}
@@ -351,6 +413,8 @@ def choix_le_plus_sur(prediction: dict, dom: str, ext: str,
         # Elire un nul a 17 % « choix le plus sur » serait absurde : quand
         # rien n'atteint le seuil, il n'y a pas de facon sure de jouer ce match.
         return {"choix": None, "alternatives": [], "sur": False, "reserves": reserves,
+                "choix_risque": choix_risque(prediction, dom, ext, p_marche, cotes,
+                                             a_melange),
                 "explication": f"rien n'atteint {SEUIL_CHOIX_SUR:.0%} parmi les paris "
                                "sur lesquels modele et marche s'accordent"}
     return {
@@ -450,6 +514,158 @@ def prono_comptes(prediction: dict, dom: str, ext: str,
              "moins": float(totaux[f"moins_{seuil}"])}
             for seuil in lignes],
     }
+
+
+# --------------------------------------------------------------------------
+# Les plus probables, tous marches confondus (resultat, buts, corners, cartons)
+# --------------------------------------------------------------------------
+
+# Seuil d'affichage : sous 70 %, une selection echoue plus d'une fois sur trois.
+SEUIL_PRUDENT = 0.70
+
+# Probabilite prudente : une estimation que rien ne vient contredire est
+# ramenee vers 50 %. Le modele de Dixon-Coles et les modeles de comptes sont
+# en moyenne trop affirmatifs aux extremes (log-loss mesuree au-dessus de celle
+# du marche, voir README) ; le retrait compense cet exces de confiance au lieu
+# de le prendre au pied de la lettre. Plus la verification manque, plus le
+# retrait est fort.
+RETRAIT_SANS_MARCHE = 0.90         # marche principal non cote (btts, totaux != 2.5...)
+RETRAIT_ANNEXE_VALIDEE = 0.90      # corners/cartons verifies contre les comptes reels
+RETRAIT_ANNEXE_NON_VALIDEE = 0.80  # corners/cartons jamais verifies
+RETRAIT_DISPERSION = 0.85          # facteur supplementaire si Poisson decrit mal la donnee
+ECART_CALIBRATION_TOLERE = 0.05
+
+# « Le plus sur de tous » : une seule selection par match, a 85 % prudents au
+# moins. Echoue encore environ 1 fois sur 7 : tres probable, jamais certain.
+SEUIL_TRES_SUR = 0.85
+# Sous cette cote equitable, une perte efface plus de dix gains.
+COTE_MINIMALE_TRES_SUR = 1.10
+
+_FAMILLES = {"1N2": "resultat", "double chance": "resultat", "btts": "buts",
+             "clean sheet": "buts"}
+
+
+def _famille(marche: str) -> str:
+    if marche.startswith("totaux"):
+        return "buts"
+    return _FAMILLES.get(marche, marche)
+
+
+def _retrait(p: float, facteur: float) -> float:
+    return 0.5 + (p - 0.5) * facteur
+
+
+def selection_prudente(pronos: list[Prono], pronos_annexes: list[dict] | None = None,
+                       p_marche: dict[tuple[str, str], float] | None = None,
+                       reserves_communes: list[str] | None = None,
+                       a_melange: float = 0.3, par_famille: int = 1) -> dict:
+    """Les selections les plus probables du match, tous marches confondus.
+
+    Ce n'est pas une liste de paris « sans risque » : il n'en existe pas. C'est,
+    pour chaque famille de marches (resultat, buts, corners, cartons), la
+    selection dont la probabilite *prudente* est la plus haute, a condition :
+      - qu'aucune reserve ne pese sur le match ni sur la ligne ;
+      - que le marche, quand il cote la selection, ne la conteste pas ;
+      - que la cote equitable reste jouable (>= COTE_MINIMALE_SURE) : « plus
+        de 0.5 buts » a 95 % n'est pas une facon de jouer un match ;
+      - que la probabilite prudente atteigne SEUIL_PRUDENT.
+
+    La probabilite prudente est le melange modele/marche quand le marche cote
+    la selection, sinon la probabilite du modele ramenee vers 50 % (voir
+    RETRAIT_*). C'est elle qui sert au classement et a l'affichage.
+    """
+    p_marche = p_marche or {}
+    if reserves_communes:
+        return {"selections": [], "meilleure": None, "le_plus_sur": None,
+                "explication": "reserve sur le match : " + " ; ".join(reserves_communes)}
+
+    candidats: list[dict] = []
+
+    def ajouter(famille, marche, selection, libelle, p_mod, p_mar, p_pru, verifie, note):
+        if p_pru < SEUIL_PRUDENT:
+            return
+        candidats.append({
+            "famille": famille, "marche": marche, "selection": selection,
+            "libelle": libelle, "p_modele": float(p_mod), "p_marche": p_mar,
+            "p_prudente": float(p_pru), "cote_equitable": round(1.0 / p_pru, 2),
+            "echoue_1_fois_sur": 1.0 / max(1.0 - p_pru, 1e-9),
+            "verifie_par_le_marche": verifie, "note": note,
+        })
+
+    for p in pronos:
+        if p.reserves:
+            continue
+        p_mar = p.p_marche
+        if p_mar is None and p.marche == "double chance" and p.selection in _DOUBLES_CHANCES:
+            a, b = _DOUBLES_CHANCES[p.selection]
+            pa, pb = p_marche.get(("1N2", a)), p_marche.get(("1N2", b))
+            if pa is not None and pb is not None:
+                p_mar = pa + pb
+        if p_mar is not None:
+            if abs(p.p_modele - p_mar) > config.SEUIL_DIVERGENCE_ALERTE:
+                continue
+            p_pru = _melange(p.p_modele, p_mar, a_melange)
+            note = "modele et marche d'accord"
+        else:
+            p_pru = _retrait(p.p_modele, RETRAIT_SANS_MARCHE)
+            note = "non cote par l'API : estimation du modele, ramenee vers 50 %"
+        ajouter(_famille(p.marche), p.marche, p.selection, p.libelle,
+                p.p_modele, p_mar, p_pru, p_mar is not None, note)
+
+    for annexe in pronos_annexes or []:
+        propres = [r for r in annexe.get("reserves", [])
+                   if r != RESERVE_SANS_MARCHE and not r.startswith("dispersion")]
+        if propres:
+            continue
+        validation = annexe.get("validation") or {}
+        fiable = (validation
+                  and not validation.get("biais_significatif")
+                  and (validation.get("ecart_calibration_max") or 1.0) <= ECART_CALIBRATION_TOLERE)
+        facteur = RETRAIT_ANNEXE_VALIDEE if fiable else RETRAIT_ANNEXE_NON_VALIDEE
+        dispersion = annexe.get("dispersion")
+        if dispersion and dispersion > SEUIL_DISPERSION_ALERTE:
+            facteur *= RETRAIT_DISPERSION
+        compte = annexe.get("libelle_compte", "compte")
+        note = ("aucun bookmaker ne cote ce marche ; modele "
+                + ("verifie contre les comptes reels" if fiable else "jamais verifie")
+                + ", estimation ramenee vers 50 %")
+        for ligne in annexe.get("tous_les_totaux", []):
+            for cote_ligne in ("plus", "moins"):
+                p_mod = float(ligne[cote_ligne])
+                ajouter(compte, compte, cote_ligne,
+                        f"{'Plus' if cote_ligne == 'plus' else 'Moins'} de "
+                        f"{ligne['ligne']} {compte}",
+                        p_mod, None, _retrait(p_mod, facteur), False, note)
+
+    candidats.sort(key=lambda c: c["p_prudente"], reverse=True)
+    # Le plus sur de tous : une seule selection, la plus probable, meme a
+    # petite cote — mais pas sous COTE_MINIMALE_TRES_SUR, ou le pari ne
+    # rapporte plus rien (« plus de 0.5 buts » a 97 %).
+    # « Plus/moins de 0.5 but » est exclu : les bookmakers le cotent autour de
+    # 1.05, et il serait le « plus sur » de presque tous les matchs sans rien
+    # dire du match lui-meme.
+    tres_surs = [c for c in candidats if c["p_prudente"] >= SEUIL_TRES_SUR
+                 and c["cote_equitable"] >= COTE_MINIMALE_TRES_SUR
+                 and c["marche"] != "totaux 0.5"]
+    le_plus_sur = tres_surs[0] if tres_surs else None
+
+    retenus: list[dict] = []
+    comptes: dict[str, int] = {}
+    for c in candidats:
+        if c["cote_equitable"] < COTE_MINIMALE_SURE:
+            continue
+        if comptes.get(c["famille"], 0) >= par_famille:
+            continue
+        comptes[c["famille"]] = comptes.get(c["famille"], 0) + 1
+        retenus.append(c)
+    if not retenus:
+        return {"selections": [], "meilleure": None, "le_plus_sur": le_plus_sur,
+                "seuil_tres_sur": SEUIL_TRES_SUR,
+                "explication": f"aucune selection jouable n'atteint {SEUIL_PRUDENT:.0%} "
+                               "en probabilite prudente"}
+    return {"selections": retenus, "meilleure": retenus[0]["p_prudente"],
+            "le_plus_sur": le_plus_sur, "seuil_tres_sur": SEUIL_TRES_SUR,
+            "seuil": SEUIL_PRUDENT, "explication": None}
 
 
 def les_plus_surs(pronos: list[Prono], combien: int = 3) -> list[Prono]:
