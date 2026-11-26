@@ -15,6 +15,11 @@ marche (w = 0.8, xi = 0.004, r = 0.3) : F1 0.9872->0.9790, SP1 0.9764->0.9679,
 I1 0.9694->0.9610, D1 0.9987->0.9838, N1 0.9988->0.9869, E0 1.0095->1.0102.
 Le marche reste devant (F1 0.9661, SP1 0.9537, I1 0.9462, D1 0.9711).
 
+Depuis : cible tiree des cotes de CLOTURE des matchs joues (Pinnacle, sinon
+moyenne), w = 0.9, xi = 0.006, r = 0.1. Meme protocole, six championnats :
+moyenne 0.9825 -> 0.9808 (D1 0.9830, E0 1.0120, F1 0.9794, I1 0.9560,
+N1 0.9888, SP1 0.9657). Le marche de cloture reste devant (~0.968).
+
 Methode : grille de couples (lambda, mu) de 0.15 a 4.00 par pas de 0.01,
 probabilites calculees une fois, puis plus proche voisin (arbre k-d) dans
 l'espace (P1, P2, Pplus2.5). La precision de 0.01 but est tres en dessous du

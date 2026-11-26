@@ -42,10 +42,17 @@ REGULARISATION_DEFAUT = 3.0
 # Cible "marche" : buts implicites des cotes des matchs deja joues (voir
 # modele/marche_implicite.py). La cible etant bien moins bruitee que le score,
 # elle supporte un oubli plus rapide et un retrecissement plus faible. Valeurs
-# retenues par walk-forward sur F1, E0, SP1, I1, D1, N1 (4 saisons).
-POIDS_MARCHE_DEFAUT = 0.8
-XI_MARCHE_DEFAUT = 0.004
-REGULARISATION_MARCHE_DEFAUT = 0.3
+# retenues par walk-forward sur F1, E0, SP1, I1, D1, N1 (4 saisons), cible
+# tiree des cotes de CLOTURE. Log-loss 1N2 moyenne des six championnats :
+#   ouverture, w=0.8 xi=0.004 r=0.3 : 0.9824
+#   cloture,   w=0.8 xi=0.004 r=0.3 : 0.9816
+#   cloture,   w=0.9 xi=0.006 r=0.1 : 0.9807   <- retenu
+# (marche de cloture de-vigge : ~0.968). Au-dela (xi=0.015 ou r=1) on degrade.
+# Ajouter le handicap asiatique de cloture a l'inversion n'apporte rien (0.9812
+# contre 0.9813), une recalibration a posteriori non plus : non retenus.
+POIDS_MARCHE_DEFAUT = 0.9
+XI_MARCHE_DEFAUT = 0.006
+REGULARISATION_MARCHE_DEFAUT = 0.1
 
 
 # Cible utilisee par l'application quand rien n'est precise.
@@ -303,7 +310,20 @@ def cible_entrainement(matchs: pd.DataFrame, cible: Cible, poids_xg: float) -> t
         if not set(colonnes) <= set(matchs.columns):
             # Source sans cotes (ESPN) : on retombe sur les buts, comme "tirs".
             return buts_dom, buts_ext
-        lam, mu = buts_implicites(*(matchs[c] for c in colonnes))
+        cotes = [matchs[c].astype(float) for c in colonnes]
+        # Cote de cloture quand elle existe (plus informee), sinon d'ouverture.
+        cotes = [matchs[f"{c}_cloture"].astype(float).fillna(cote)
+                 if f"{c}_cloture" in matchs.columns else cote
+                 for c, cote in zip(colonnes, cotes)]
+        # Cloture et ouverture ne se melangent pas a l'interieur d'un match : un
+        # 1N2 de cloture avec un plus/moins d'ouverture donnerait une cible
+        # incoherente. On ne garde la cloture que si les cinq cotes y sont.
+        if all(f"{c}_cloture" in matchs.columns for c in colonnes):
+            complet = np.all([matchs[f"{c}_cloture"].notna().to_numpy()
+                              for c in colonnes], axis=0)
+            cotes = [np.where(complet, cl, matchs[c].astype(float))
+                     for c, cl in zip(colonnes, cotes)]
+        lam, mu = buts_implicites(*cotes)
         # Un match sans cotes exploitables garde ses buts reels.
         lam = np.where(np.isnan(lam), buts_dom, lam)
         mu = np.where(np.isnan(mu), buts_ext, mu)

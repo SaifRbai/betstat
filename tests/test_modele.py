@@ -260,7 +260,8 @@ def test_buts_implicites_nan_si_cote_absente_ou_invalide() -> None:
 
 def test_cible_marche_sans_cotes_retombe_sur_les_buts() -> None:
     matchs, *_ = _championnat_simule()
-    par_buts = dc.entrainer(matchs, cible="buts", xi=0.0, regularisation=0.3)
+    par_buts = dc.entrainer(matchs, cible="buts", xi=0.0,
+                            regularisation=dc.REGULARISATION_MARCHE_DEFAUT)
     par_marche = dc.entrainer(matchs, cible="marche", xi=0.0)
     assert par_marche.attaque == pytest.approx(par_buts.attaque)
 
@@ -287,3 +288,19 @@ def test_defauts_par_cible() -> None:
     assert dc.defauts_cible("marche")["regularisation"] == dc.REGULARISATION_MARCHE_DEFAUT
     assert dc.defauts_cible("buts")["regularisation"] == dc.REGULARISATION_DEFAUT
     assert dc.CIBLE_DEFAUT == "marche"
+
+
+def test_cible_marche_prefere_les_cotes_de_cloture() -> None:
+    """Cloture complete -> elle sert de cible ; cloture incomplete -> ouverture."""
+    matchs, *_ = _championnat_simule(nb_tours=1)
+    matchs = matchs.head(3).reset_index(drop=True)
+    ouverture = _cotes_poisson(1.0, 1.0)
+    cloture = _cotes_poisson(2.5, 0.8)
+    noms = ("cote_1", "cote_N", "cote_2", "cote_plus25", "cote_moins25")
+    for i, col in enumerate(noms):
+        matchs[col] = ouverture[i]
+        matchs[f"{col}_cloture"] = cloture[i]
+    matchs.loc[2, "cote_plus25_cloture"] = np.nan   # cloture incomplete
+    lam, mu = dc.cible_entrainement(matchs, "marche", 1.0)
+    assert lam[0] == pytest.approx(2.5, abs=0.02) and mu[0] == pytest.approx(0.8, abs=0.02)
+    assert lam[2] == pytest.approx(1.0, abs=0.02) and mu[2] == pytest.approx(1.0, abs=0.02)

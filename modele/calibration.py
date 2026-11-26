@@ -210,9 +210,9 @@ def optimiser_hyperparametres(
             return cache
 
     if cible == "marche" and tuple(grille_w) == GRILLE_W:
-        grille_w = (0.5, 0.8, 1.0)
+        grille_w = (0.8, 0.9, 1.0)
     if cible == "marche" and tuple(grille_xi) == GRILLE_XI:
-        grille_xi = (0.002, 0.003, 0.004, 0.006)
+        grille_xi = (0.004, 0.006, 0.010)
     grille_w = (list(grille_w) if cible in ("melange", "tirs", "marche")
                 else [dc.POIDS_XG_DEFAUT])
     grille_xi = list(grille_xi)

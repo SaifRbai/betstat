@@ -83,6 +83,19 @@ _COTES_MAX: dict[str, tuple[str, ...]] = {
     "cote_plus25_max": ("Max>2.5", "B365>2.5", "Avg>2.5"),
     "cote_moins25_max": ("Max<2.5", "B365<2.5", "Avg<2.5"),
 }
+# Cotes de cloture, Pinnacle d'abord (le book le plus affute), sinon la moyenne.
+# Elles ne servent QU'A la cible d'entrainement "marche", donc uniquement pour
+# des matchs deja joues : la cote de cloture d'un match a venir n'existe pas
+# encore et n'entre jamais dans une prediction. Mesure walk-forward sur 4
+# saisons (F1, E0, SP1, I1, D1, N1) : log-loss 1N2 moyenne 0.9824 -> 0.9807
+# avec les reglages de dixon_coles.XI_MARCHE_DEFAUT & co.
+_COTES_CLOTURE: dict[str, tuple[str, ...]] = {
+    "cote_1_cloture": ("PSCH", "AvgCH", "B365CH"),
+    "cote_N_cloture": ("PSCD", "AvgCD", "B365CD"),
+    "cote_2_cloture": ("PSCA", "AvgCA", "B365CA"),
+    "cote_plus25_cloture": ("PC>2.5", "AvgC>2.5", "B365C>2.5"),
+    "cote_moins25_cloture": ("PC<2.5", "AvgC<2.5", "B365C<2.5"),
+}
 
 COLONNES_NORMALISEES: tuple[str, ...] = (
     "date", "saison", "championnat", "dom", "ext",
@@ -91,7 +104,7 @@ COLONNES_NORMALISEES: tuple[str, ...] = (
     "tirs_dom", "tirs_ext", "tirs_cadres_dom", "tirs_cadres_ext",
     "fautes_dom", "fautes_ext", "corners_dom", "corners_ext",
     "jaunes_dom", "jaunes_ext", "rouges_dom", "rouges_ext",
-    *_COTES_MOYENNES, *_COTES_MAX,
+    *_COTES_MOYENNES, *_COTES_MAX, *_COTES_CLOTURE,
 )
 
 
@@ -443,7 +456,7 @@ def nettoyer(brut: pd.DataFrame, saison: str, ligue: str) -> pd.DataFrame:
     for colonne in numeriques:
         sortie[colonne] = pd.to_numeric(sortie[colonne], errors="coerce")
 
-    for cible, candidates in {**_COTES_MOYENNES, **_COTES_MAX}.items():
+    for cible, candidates in {**_COTES_MOYENNES, **_COTES_MAX, **_COTES_CLOTURE}.items():
         sortie[cible] = _premiere_colonne(df, candidates)
 
     sortie["total_buts"] = sortie["buts_dom"] + sortie["buts_ext"]
